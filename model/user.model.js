@@ -1,0 +1,136 @@
+import mongoose from "mongoose";
+import bcrypt from "bcrypt";
+
+const userSchema = new mongoose.Schema(
+  {
+    name: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+    email: {
+      type: String,
+      required: true,
+      unique: true,
+      trim: true,
+    },
+    password: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+    role: {
+      type: [String],
+      enum: ["admin", "employee", "hr", "manager"],
+      default: "employee",
+    },
+    profileImage: {
+      type: String,
+      default: null,
+    },
+    address: [
+      {
+        address: {
+          type: String,
+        },
+        city: {
+          type: String,
+        },
+      },
+    ],
+    phone: {
+      type: String,
+      default: null,
+    },
+    skills: [
+      {
+        skill: {
+          type: String,
+        },
+        yearsOfExperience: {
+          type: Number,
+        },
+      },
+    ],
+    education: [
+      {
+        degree: String,
+        institution: String,
+        year: Number,
+        specialization: String,
+      },
+    ],
+    experience: [
+      {
+        company: {
+          type: String,
+        },
+        position: {
+          type: String,
+        },
+        startDate: {
+          type: Date,
+        },
+        endDate: {
+          type: Date,
+        },
+      },
+    ],
+
+    leaves: [
+      {
+        totalBalance: {
+          type: Number,
+          default: 24,
+        },
+       
+        paidLeave: {
+          type: Number,
+          default: 12,
+        },
+        leaveTaken: {
+          type: Number,
+          default: 0,
+        },
+      },
+    ],
+
+    dob: {
+      type: Date,
+      default: null,
+    },
+    aadharCardNumber: { type: String },
+    panCardNumber: { type: String },
+    bankAccountNo: { type: String },
+    bankName: { type: String },
+    bankIFSC: { type: String },
+    bankBranch: { type: String },
+    gender: {
+      type: String,
+      enum: ["male", "female"],
+      default: "male",
+    },
+    isActive: {
+      type: Boolean,
+      default: true,
+    },
+  },
+  { timestamps: true }
+);
+
+userSchema.pre('save', async function(next){
+  if(!this.isModified('password')){
+    return next();
+  }
+  this.password = await bcrypt.hash(this.password, 10);
+  next();
+});
+
+userSchema.methods.comparePassword = async function(password){
+  return await bcrypt.compare(password, this.password);
+};
+
+const User = mongoose.model("User", userSchema);
+
+
+export default User;

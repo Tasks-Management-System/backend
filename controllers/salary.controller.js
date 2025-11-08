@@ -1,0 +1,216 @@
+import path from "path";
+import Salary from "../model/salary.model.js";
+import User from "../model/user.model.js";
+import { generateSalarySlip } from "../utils/generatePdf.js";
+
+export const createSalary = async (req, res) => {
+  const { employee, month, year, basicSalary, bonus, deductions, payDate } =
+    req.body;
+
+  try {
+    const user = await User.findById(employee);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "Employee not found",
+      });
+    }
+
+    // Check for existing salary slip for the same month and year
+    const existingSalarySlip = await Salary.findOne({ employee, month, year });
+
+    if (existingSalarySlip) {
+      return res.status(400).json({
+        success: false,
+        message: `Salary slip for ${month} ${year} already exists`,
+      });
+    }
+
+    // calculate net salary
+    const netSalarySlip = basicSalary + bonus - deductions;
+
+    const salary = await Salary.create({
+      employee,
+      month,
+      year,
+      basicSalary,
+      bonus,
+      deductions,
+      netSalary: netSalarySlip,
+      payDate,
+      createdBy: req.user._id,
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: "Salary slip created successfully",
+      salary,
+      createdBy: req.user._id,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: "Error getting create salary slip",
+      error: error.message,
+    });
+  }
+};
+export const getSalary = async (req, res) => {
+  try {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const skip = (page - 1) * limit;
+
+    const total = await Salary.countDocuments();
+    const totalPages = Math.ceil(total / 10);
+    const hasNextPage = page < totalPages;
+    const hasPreviousPage = page > 1;
+    const nextPage = hasNextPage ? page + 1 : null;
+    const previousPage = hasPreviousPage ? page - 1 : null;
+    const salary = await Salary.find()
+      .skip(skip)
+      .limit(limit)
+      .sort({ createdAt: -1 })
+      .populate("employee", "name");
+    return res.status(200).json({
+      success: true,
+      message: "Fetched all salary slips",
+      salary,
+      total,
+      page,
+      totalPages,
+      hasNextPage,
+      hasPreviousPage,
+      nextPage,
+      previousPage,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: "Error getting fetched All salary slips",
+    });
+  }
+};
+export const updateSalary = async (req, res) => {
+  const { id } = req.params;
+  const { deductions, bonus, basicSalary } = req.body;
+
+  try {
+    const existingSalary = await Salary.findById(id);
+    if (!existingSalary) {
+      return res.status(404).json({
+        success: false,
+        message: "Salary slip not found",
+      });
+    }
+
+    //Recalculate salary
+    const netSalary =
+      (basicSalary ?? existingSalary.basicSalary) +
+      (bonus ?? existingSalary.bonus) -
+      (deductions ?? existingSalary.deductions);
+
+    const salary = await Salary.findByIdAndUpdate(
+      id,
+      {
+        basicSalary: basicSalary ?? existingSalary.basicSalary,
+        bonus: bonus ?? existingSalary.bonus,
+        deductions: deductions ?? existingSalary.deductions,
+        netSalary,
+      },
+      { new: true }
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: "Salary updated successfully",
+      salary,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: "Error getting update salary",
+    });
+  }
+};
+export const getSalaryById = async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    const salary = await Salary.findById(id);
+
+    if (!salary) {
+      return res.status(404).json({
+        success: false,
+        message: "Salary not found",
+      });
+    }
+    return res.status(200).json({
+      success: true,
+      message: "Salary fetched successfully",
+      salary,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: "Error getting fetched salary",
+    });
+  }
+};
+export const deleteSalary = async (req, res) => {
+  const { id } = req.params;
+  try {
+    const salary = await Salary.findByIdAndDelete(id);
+    if (!salary) {
+      return res.status(404).json({
+        success: false,
+        message: "Salary not found",
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "Salary deleted successfully",
+      salary,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: "Error getting update salary",
+    });
+  }
+};
+
+export const generatePDF = async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    const salary = await Salary.findById(id).populate("employee", "name");
+    if (!salary) {
+      return res.status(404).json({
+        success: false,
+        message: "Salary slip not found",
+      });
+    }
+
+    const filePath = path.join(
+      "upload",
+      `salary-slip-${salary.employee.name}-${salary.month}-${salary.year}.pdf`
+    );
+
+    await generateSalarySlip(salary, filePath);
+
+    return res.status(200).json({
+      success: true,
+      message: "Salary slip PDF generated successfully",
+      pdfPath:filePath,
+      salary
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: "Error getting PDF salary",
+      error: error.message
+    });
+  }
+};
