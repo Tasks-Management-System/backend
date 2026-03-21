@@ -281,3 +281,43 @@ export const logoutUser = async (req, res) => {
     });
   }
 };
+
+export const refreshToken = async (req, res) => {
+  const { refreshToken } = req.body;
+  try {
+    if (!refreshToken) {
+      return res.status(400).json({
+        success: false,
+        message: "Refresh token is required",
+      });
+    }
+    const decoded = jwt.verify(refreshToken, process.env.JWT_SECRET);
+    if (!decoded) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid refresh token",
+      });
+    }
+    const user = await User.findById(decoded.id).select("-password");
+    if (!user) {
+      return res.status(400).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+    const token = jwt.sign({ id: user._id, role: user.role }, process.env.JWT_SECRET, {
+      expiresIn: process.env.JWT_EXPIRES_IN,
+    });
+    return res.status(200).json({
+      success: true,
+      message: "Token refreshed successfully",
+      token,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: "Error refreshing token",
+      error: error.message,
+    });
+  }
+};
