@@ -21,7 +21,7 @@ const userSchema = new mongoose.Schema(
     },
     role: {
       type: [String],
-      enum: ["admin", "employee", "hr", "manager"],
+      enum: ["super-admin", "admin", "employee", "hr", "manager"],
       default: "employee",
     },
     profileImage: {
@@ -113,6 +113,18 @@ const userSchema = new mongoose.Schema(
     isActive: {
       type: Boolean,
       default: true,
+    },
+    isEmailVerified: {
+      type: Boolean,
+      default: false,
+    },
+    emailVerificationToken: {
+      type: String,
+      default: null,
+    },
+    emailVerificationExpiresAt: {
+      type: Date,
+      default: null,
     },
   },
   { timestamps: true }
