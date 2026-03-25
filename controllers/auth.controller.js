@@ -1,5 +1,9 @@
 import User from "../model/user.model.js";
 import jwt from "jsonwebtoken";
+import {
+  canAccessUserProfile,
+  resolveOrgAdminId,
+} from "../utils/teamScope.js";
 import crypto from "crypto";
 import { sendEmail } from "../utils/mailService/sendMail.js";
 import { verifyEmailTemplate } from "../utils/mailService/verifyEmailTemplate.js";
@@ -117,6 +121,94 @@ export const registerUser = async (req, res) => {
     });
   }
 };
+
+/** Admin or super-admin creates a user with an explicit role (skips email verification). */
+export const createUserByAdmin = async (req, res) => {
+  try {
+    const {
+      name,
+      email,
+      password,
+      role: roleInput,
+      phone,
+      gender,
+      dob,
+    } = req.body;
+
+    const actorRole = Array.isArray(req.user?.role)
+      ? req.user.role[0]
+      : req.user?.role;
+    const requestedRole = Array.isArray(roleInput) ? roleInput[0] : roleInput;
+
+    if (!name?.trim() || !email?.trim() || !password || !requestedRole) {
+      return res.status(400).json({
+        success: false,
+        message: "Name, email, password, and role are required",
+      });
+    }
+
+    if (actorRole !== "admin" && actorRole !== "super-admin") {
+      return res.status(403).json({
+        success: false,
+        message: "Only an admin or super-admin can create users this way",
+      });
+    }
+
+    if (actorRole === "admin") {
+      if (!ADMIN_ASSIGNABLE_ROLES.includes(requestedRole)) {
+        return res.status(403).json({
+          success: false,
+          message:
+            "You can only create users with roles: employee, hr, or manager",
+        });
+      }
+    }
+
+    const existingUser = await User.findOne({ email: email.trim() });
+    if (existingUser) {
+      return res.status(400).json({
+        success: false,
+        message: "User already exists with this email",
+      });
+    }
+
+    let managedBy = null;
+    if (actorRole === "admin" && ADMIN_ASSIGNABLE_ROLES.includes(requestedRole)) {
+      managedBy = req.user._id;
+    }
+
+    const newUser = await User.create({
+      name: name.trim(),
+      email: email.trim(),
+      password,
+      role: [requestedRole],
+      managedBy,
+      phone: phone ?? undefined,
+      gender: gender ?? undefined,
+      dob: dob ? new Date(dob) : undefined,
+      isEmailVerified: true,
+      emailVerificationToken: null,
+      emailVerificationExpiresAt: null,
+    });
+
+    const userResponse = newUser.toObject();
+    delete userResponse.password;
+
+    return res.status(201).json({
+      success: true,
+      message: "User created successfully",
+      user: userResponse,
+    });
+  } catch (error) {
+    console.error("Error creating user by admin:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Error creating user",
+      error: error.message,
+    });
+  }
+};
+
 export const loginUser = async (req, res) => {
   const { email, password } = req.body;
   if (!email || !password) {
@@ -200,6 +292,13 @@ export const verifyUserEmail = async (req, res) => {
 export const getUser = async (req, res) => {
   const userId = req.params.id;
   try {
+    const allowed = await canAccessUserProfile(req.user, userId);
+    if (!allowed) {
+      return res.status(403).json({
+        success: false,
+        message: "You are not allowed to view this user",
+      });
+    }
     const user = await User.findById(userId).select("-password");
     if (!user) {
       return res.status(400).json({
@@ -283,6 +382,18 @@ export const updateUser = async (req, res) => {
     }
 
     const normalizedRole = role !== undefined ? (Array.isArray(role) ? role : [role]) : undefined;
+
+    const targetBefore = await User.findById(userId).select("role managedBy");
+    if (targetBefore) {
+      const canEdit = await canAccessUserProfile(req.user, userId);
+      if (!canEdit) {
+        return res.status(403).json({
+          success: false,
+          message: "You are not allowed to update this user",
+        });
+      }
+    }
+
     const updateData = {
       ...(name !== undefined && { name }),
       ...(email !== undefined && { email }),
@@ -304,6 +415,27 @@ export const updateUser = async (req, res) => {
       ...(experience !== undefined && { experience }),
       ...(leaves !== undefined && { leaves }),
     };
+
+    const actorRoleFlat =
+      Array.isArray(req.user?.role) ? req.user.role[0] : req.user?.role;
+    if (actorRoleFlat === "admin" && userId !== req.user._id.toString()) {
+      const effectiveRoles = normalizedRole
+        ? normalizedRole
+        : targetBefore?.role
+          ? Array.isArray(targetBefore.role)
+            ? targetBefore.role
+            : [targetBefore.role]
+          : [];
+      const isTeamRole = effectiveRoles.some((r) =>
+        ADMIN_ASSIGNABLE_ROLES.includes(r)
+      );
+      const isAdminRole = effectiveRoles.some((r) => r === "admin");
+      if (isAdminRole) {
+        updateData.managedBy = null;
+      } else if (isTeamRole) {
+        updateData.managedBy = req.user._id;
+      }
+    }
 
     const user = await User.findByIdAndUpdate(userId, updateData, { new: true }).select("-password");
 
@@ -329,11 +461,40 @@ export const updateUser = async (req, res) => {
 
 export const getAllUsers = async (req, res) => {
   try {
-    const users = await User.find().select("-password");
+    const actorRole = Array.isArray(req.user.role) ? req.user.role[0] : req.user.role;
+    let query = {};
+
+    if (actorRole === "super-admin") {
+      query = {};
+    } else if (actorRole === "admin") {
+      query = {
+        $or: [{ _id: req.user._id }, { managedBy: req.user._id }],
+      };
+    } else if (actorRole === "hr") {
+      const orgAdminId = resolveOrgAdminId(req.user);
+      if (!orgAdminId) {
+        query = { _id: req.user._id };
+      } else {
+        query = {
+          $or: [
+            { _id: req.user._id },
+            { _id: orgAdminId },
+            { managedBy: orgAdminId },
+          ],
+        };
+      }
+    } else {
+      return res.status(403).json({
+        success: false,
+        message: "Not authorized to list users",
+      });
+    }
+
+    const users = await User.find(query).select("-password");
 
     return res.status(200).json({
       success: true,
-      message: "All users fetched successfully",
+      message: "Users fetched successfully",
       users,
     });
   } catch (error) {
@@ -349,6 +510,21 @@ export const deleteUser = async (req, res) => {
   const userId = req.params.id;
 
   try {
+    if (userId === req.user._id.toString()) {
+      return res.status(400).json({
+        success: false,
+        message: "You cannot delete your own account here",
+      });
+    }
+
+    const allowed = await canAccessUserProfile(req.user, userId);
+    if (!allowed) {
+      return res.status(403).json({
+        success: false,
+        message: "You are not allowed to delete this user",
+      });
+    }
+
     const user = await User.findByIdAndDelete(userId);
 
     if (!user) {

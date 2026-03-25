@@ -1,23 +1,93 @@
 import Task from "../model/tasks.model.js";
 import User from "../model/user.model.js";
+import Project from "../model/project.model.js";
 import { formatDuration } from "../utils/timeFormatter.js";
+import {
+  getOrgCreatorUserIds,
+  resolveOrgAdminId,
+  userBelongsToOrg,
+} from "../utils/teamScope.js";
+
+async function getOrgProjectIds(orgAdminId) {
+  if (!orgAdminId) return [];
+  const creatorIds = await getOrgCreatorUserIds(orgAdminId);
+  const ids = await Project.find({ user: { $in: creatorIds } }).distinct("_id");
+  return ids;
+}
+
+async function taskAccessibleByUser(taskDoc, reqUser) {
+  if (!taskDoc) return false;
+  if (reqUser.role === "super-admin") return true;
+
+  const orgAdminId = resolveOrgAdminId(reqUser);
+  if (!orgAdminId) return false;
+
+  let ownerId = taskDoc.project?.user;
+  if (!ownerId && taskDoc.project) {
+    const p = await Project.findById(taskDoc.project).select("user").lean();
+    ownerId = p?.user;
+  }
+  if (!ownerId) return false;
+
+  const creatorIds = await getOrgCreatorUserIds(orgAdminId);
+  const inOrg = creatorIds.some((id) => id.equals(ownerId));
+  if (!inOrg) return false;
+
+  if (["admin", "manager", "hr"].includes(reqUser.role)) return true;
+  return taskDoc.assignedTo?.toString() === reqUser._id.toString();
+}
 
 export const createTask = async (req, res) => {
-  const { project, assignedTo, taskName, priority, status } = req.body;
+  const { project, assignedTo, taskName, description, dueDate, priority, status } = req.body;
 
   try {
-    const user = await User.findById(assignedTo || null);
-    console.log("user ==>", user);
-    if (!user && assignedTo === null) {
+    const projectDoc = await Project.findById(project);
+    if (!projectDoc) {
       return res.status(404).json({
         success: false,
-        message: "User not found",
+        message: "Project not found",
       });
+    }
+
+    if (req.user.role !== "super-admin") {
+      const orgAdminId = resolveOrgAdminId(req.user);
+      const creatorIds = await getOrgCreatorUserIds(orgAdminId);
+      if (
+        !orgAdminId ||
+        !creatorIds.some((id) => id.equals(projectDoc.user))
+      ) {
+        return res.status(403).json({
+          success: false,
+          message: "You can only create tasks on projects in your organization",
+        });
+      }
+    }
+
+    if (assignedTo) {
+      const user = await User.findById(assignedTo);
+      if (!user) {
+        return res.status(404).json({
+          success: false,
+          message: "User not found",
+        });
+      }
+      if (req.user.role !== "super-admin") {
+        const orgAdminId = resolveOrgAdminId(req.user);
+        const allowed = await userBelongsToOrg(assignedTo, orgAdminId);
+        if (!allowed) {
+          return res.status(403).json({
+            success: false,
+            message: "You can assign tasks only to users in your organization",
+          });
+        }
+      }
     }
     const newTask = await Task.create({
       project,
-      assignedTo,
+      assignedTo: assignedTo || undefined,
       taskName,
+      description: description ?? "",
+      dueDate: dueDate ? new Date(dueDate) : null,
       priority,
       status,
     });
@@ -48,11 +118,32 @@ export const getTasks = async (req, res) => {
     const { _id: userId, role } = req.user;
     const userRole = Array.isArray(role) ? role[0] : role;
 
-    // ✅ Base query
-    let query =
-      userRole === "admin" || userRole === "manager" || userRole === "hr"
-        ? {}
-        : { assignedTo: userId };
+    let query = {};
+    let canSeeAll =
+      userRole === "admin" || userRole === "manager" || userRole === "hr";
+
+    if (userRole === "super-admin") {
+      query = {};
+    } else {
+      const orgAdminId = resolveOrgAdminId(req.user);
+      const projectIds = await getOrgProjectIds(orgAdminId);
+      if (canSeeAll) {
+        query = { project: { $in: projectIds } };
+      } else {
+        query = { assignedTo: userId, project: { $in: projectIds } };
+      }
+    }
+
+    if (req.query.scope === "my") {
+      if (userRole === "super-admin") {
+        query = { assignedTo: userId };
+      } else {
+        const orgAdminId = resolveOrgAdminId(req.user);
+        const projectIds = await getOrgProjectIds(orgAdminId);
+        query = { assignedTo: userId, project: { $in: projectIds } };
+      }
+      canSeeAll = false;
+    }
 
     // ✅ Date filter (fromDate, toDate)
     const { fromDate, toDate } = req.query;
@@ -72,34 +163,35 @@ export const getTasks = async (req, res) => {
       }
     }
 
+    if (req.query.project) {
+      query.project = req.query.project;
+    }
+
+    if (req.query.archived === "true") {
+      query.archived = true;
+    } else {
+      query.archived = { $ne: true };
+    }
+
+    const search = req.query.search?.trim();
+    if (search) {
+      const rx = new RegExp(search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
+      query.taskName = rx;
+    }
+
     // ✅ Pagination setup
     const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 10;
+    const limit = Math.min(parseInt(req.query.limit) || 10, 100);
     const skip = (page - 1) * limit;
 
-    // ✅ Fetch tasks with filters
-    let tasks = await Task.find(query)
+    const totalTasks = await Task.countDocuments(query);
+
+    const tasks = await Task.find(query)
       .populate("project", "projectName")
       .populate("assignedTo", "name email role")
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limit);
-
-    // ✅ Search filter
-    const search = req.query.search?.trim()?.toLowerCase();
-    if (search) {
-      tasks = tasks.filter((task) => {
-        const taskNameMatch = task.taskName?.toLowerCase().includes(search);
-        const projectMatch = task.project?.projectName
-          ?.toLowerCase()
-          .includes(search);
-        const assignedMatch = task.assignedTo?.name
-          ?.toLowerCase()
-          .includes(search);
-
-        return taskNameMatch || projectMatch || assignedMatch;
-      });
-    }
 
     // ✅ Add readable time format
     const formattedTasks = tasks.map((task) => ({
@@ -107,19 +199,15 @@ export const getTasks = async (req, res) => {
       readableTotalTime: formatDuration(task.totalTime),
     }));
 
-    // ✅ Pagination meta
-    const totalTasks = formattedTasks.length;
-
     return res.status(200).json({
       success: true,
-      message:
-        userRole === "admin"
-          ? "All tasks fetched successfully"
-          : "Your assigned tasks fetched successfully",
+      message: canSeeAll
+        ? "Organization tasks fetched successfully"
+        : "Your assigned tasks fetched successfully",
       tasks: formattedTasks,
       pagination: {
         totalTasks,
-        totalPages: Math.ceil(totalTasks / limit),
+        totalPages: Math.ceil(totalTasks / limit) || 1,
         currentPage: page,
         nextPage: page * limit < totalTasks ? page + 1 : null,
         previousPage: page > 1 ? page - 1 : null,
@@ -145,7 +233,15 @@ export const updateTask = async (req, res) => {
         .json({ success: false, message: "Task not found" });
     }
 
-    const { status, taskName, priority } = req.body;
+    const allowed = await taskAccessibleByUser(task, req.user);
+    if (!allowed) {
+      return res.status(403).json({
+        success: false,
+        message: "Not allowed to update this task",
+      });
+    }
+
+    const { status, taskName, priority, description, dueDate, archived } = req.body;
 
     if (status) {
       // If moving to "in_progress" → start timer
@@ -165,6 +261,9 @@ export const updateTask = async (req, res) => {
 
     if (taskName) task.taskName = taskName;
     if (priority) task.priority = priority;
+    if (description !== undefined) task.description = description;
+    if (dueDate !== undefined) task.dueDate = dueDate ? new Date(dueDate) : null;
+    if (archived !== undefined) task.archived = archived;
 
     await task.save();
 
@@ -198,6 +297,15 @@ export const taskById = async (req, res) => {
         message: "Task not found",
       });
     }
+
+    const allowed = await taskAccessibleByUser(task, req.user);
+    if (!allowed) {
+      return res.status(403).json({
+        success: false,
+        message: "Not allowed to view this task",
+      });
+    }
+
     return res.status(200).json({
       success: true,
       message: "Task fetched successfully",
@@ -218,13 +326,23 @@ export const taskById = async (req, res) => {
 export const deleteTask = async (req, res) => {
   const taskId = req.params.id;
   try {
-    const task = await Task.findByIdAndDelete(taskId);
+    const task = await Task.findById(taskId);
     if (!task) {
       return res.status(404).json({
         success: false,
         message: "Task not found",
       });
     }
+
+    const allowed = await taskAccessibleByUser(task, req.user);
+    if (!allowed) {
+      return res.status(403).json({
+        success: false,
+        message: "Not allowed to delete this task",
+      });
+    }
+
+    await Task.findByIdAndDelete(taskId);
     return res.status(200).json({
       success: true,
       message: "Task deleted successfully",
@@ -245,15 +363,30 @@ export const addQuery = async (req, res) => {
   const userId = req.user._id
 
   try {
-    const task = await Task.findById(id)
-    if(!task) {
+    const task = await Task.findById(id);
+    if (!task) {
       return res.status(404).json({
         success: false,
-        message: "Task not found"
-      })
+        message: "Task not found",
+      });
     }
 
-    const newQuery = { message }
+    if (task.assignedTo?.toString() !== userId.toString()) {
+      return res.status(403).json({
+        success: false,
+        message: "Only the assignee can add a query to this task",
+      });
+    }
+
+    const allowed = await taskAccessibleByUser(task, req.user);
+    if (!allowed) {
+      return res.status(403).json({
+        success: false,
+        message: "Not allowed to add a query on this task",
+      });
+    }
+
+    const newQuery = { message };
     task.queries.push(newQuery)
     await task.save()
     return res.status(200).json({
@@ -284,15 +417,30 @@ export const replyQuery = async (req, res) => {
       })
     }
 
-    const task= await Task.findById(taskId)
-    if(!task) {
+    const task = await Task.findById(taskId).populate("project", "user");
+    if (!task) {
       return res.status(404).json({
         success: false,
-        message: "Task not found"
-      })
-    } 
+        message: "Task not found",
+      });
+    }
 
-    const query = task.queries.id(queryId)
+    if (req.user.role !== "super-admin") {
+      const orgAdminId = resolveOrgAdminId(req.user);
+      const creatorIds = await getOrgCreatorUserIds(orgAdminId);
+      const ownerId = task.project?.user;
+      if (
+        !ownerId ||
+        !creatorIds.some((id) => id.equals(ownerId))
+      ) {
+        return res.status(403).json({
+          success: false,
+          message: "You are not authorized to reply to this query",
+        });
+      }
+    }
+
+    const query = task.queries.id(queryId);
     if(!query) {
       return res.status(404).json({
         success: false,

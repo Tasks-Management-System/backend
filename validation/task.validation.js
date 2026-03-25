@@ -7,6 +7,8 @@ export const CreateTaskBodySchema = z
     project: z.string().min(1, 'Project ID is required').openapi({ example: '64b1f2c3d4e5f6a7b8c9d0e1' }),
     assignedTo: z.string().optional().openapi({ example: '64b1f2c3d4e5f6a7b8c9d0e2' }),
     taskName: z.string().min(1, 'Task name is required').openapi({ example: 'Implement login API' }),
+    description: z.string().optional().openapi({ example: 'Add JWT and refresh flow' }),
+    dueDate: z.string().optional().openapi({ example: '2025-12-31' }),
     priority: z.enum(['low', 'medium', 'urgent']).optional().openapi({ example: 'medium' }),
     status: z.enum(['pending', 'in_progress', 'completed']).optional().openapi({ example: 'pending' }),
   })
@@ -15,6 +17,9 @@ export const CreateTaskBodySchema = z
 export const UpdateTaskBodySchema = z
   .object({
     taskName: z.string().optional(),
+    description: z.string().optional(),
+    dueDate: z.string().nullable().optional(),
+    archived: z.boolean().optional(),
     status: z.enum(['pending', 'in_progress', 'completed']).optional().openapi({ example: 'in_progress' }),
     priority: z.enum(['low', 'medium', 'urgent']).optional(),
   })
@@ -31,6 +36,9 @@ export const TaskQuerySchema = z
     fromDate: z.string().optional().openapi({ example: '2024-01-01' }),
     toDate: z.string().optional().openapi({ example: '2024-12-31' }),
     search: z.string().optional().openapi({ example: 'login' }),
+    project: z.string().optional().openapi({ example: '64b1f2c3d4e5f6a7b8c9d0e1' }),
+    archived: z.enum(['true', 'false']).optional().openapi({ example: 'false' }),
+    scope: z.enum(['all', 'my']).optional().openapi({ example: 'all' }),
   })
   .openapi('TaskQuery');
 

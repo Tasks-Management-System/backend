@@ -1,5 +1,6 @@
 import express from 'express';
 import {
+  createUserByAdmin,
   deleteUser,
   getAllUsers,
   getUser,
@@ -15,6 +16,7 @@ import { authorize } from '../middleware/authorize.middleware.js';
 import { uploadImage } from '../middleware/multer.middleare.js';
 import { validate } from '../middleware/validate.middleware.js';
 import {
+  AdminCreateUserBodySchema,
   LoginBodySchema,
   RegisterBodySchema,
   UpdateUserBodySchema,
@@ -30,7 +32,15 @@ router.get('/verify-email', verifyUserEmail);
 router.post('/logout', authenticateMiddleware, logoutUser);
 router.post('/refresh-token', validate({ body: RefreshTokenBodySchema }), refreshToken);
 
-router.get('/', authenticateMiddleware, authorize('admin', 'hr'), getAllUsers);
+router.post(
+  '/create-user',
+  authenticateMiddleware,
+  authorize('super-admin', 'admin'),
+  validate({ body: AdminCreateUserBodySchema }),
+  createUserByAdmin
+);
+
+router.get('/', authenticateMiddleware, authorize('super-admin', 'admin', 'hr'), getAllUsers);
 router.get('/:id', authenticateMiddleware, validate({ params: UserIdParamSchema }), getUser);
 router.put('/:id', authenticateMiddleware, uploadImage.single('profileImage'), validate({ params: UserIdParamSchema, body: UpdateUserBodySchema }), updateUser);
 router.delete('/:id', authenticateMiddleware, authorize('admin'), validate({ params: UserIdParamSchema }), deleteUser);

@@ -54,6 +54,20 @@ export const RegisterBodySchema = z
   })
   .openapi('RegisterBody');
 
+export const AdminCreateUserBodySchema = z
+  .object({
+    name: z.string().min(1, 'Name is required').openapi({ example: 'Jane Doe' }),
+    email: z.string().email('Invalid email').openapi({ example: 'jane@example.com' }),
+    password: z.string().min(6, 'Password must be at least 6 characters').openapi({ example: 'secret123' }),
+    role: z
+      .enum(['admin', 'employee', 'hr', 'manager'])
+      .openapi({ example: 'employee', description: 'Role assigned to the new user' }),
+    phone: z.string().optional(),
+    gender: z.enum(['male', 'female']).optional(),
+    dob: z.string().optional(),
+  })
+  .openapi('AdminCreateUserBody');
+
 export const LoginBodySchema = z
   .object({
     email: z.string().email('Invalid email').openapi({ example: 'john@example.com' }),
@@ -117,6 +131,19 @@ registry.registerPath({
   responses: {
     200: { description: 'Login successful — returns token' },
     400: { description: 'Invalid credentials' },
+  },
+});
+
+registry.registerPath({
+  method: 'post',
+  path: '/auth/create-user',
+  tags: ['Auth'],
+  summary: 'Create a user with role (admin or super-admin only)',
+  security: bearerAuth,
+  request: { body: { content: { 'application/json': { schema: AdminCreateUserBodySchema } } } },
+  responses: {
+    201: { description: 'User created' },
+    403: { description: 'Forbidden' },
   },
 });
 

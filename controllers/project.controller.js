@@ -1,4 +1,8 @@
 import Project from "../model/project.model.js";
+import {
+  getOrgCreatorUserIds,
+  resolveOrgAdminId,
+} from "../utils/teamScope.js";
 
 export const createProject = async (req, res) => {
   const userId = req.user._id;
@@ -24,23 +28,36 @@ export const createProject = async (req, res) => {
 };
 
 export const getAllProjects = async (req, res) => {
-
   try {
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
     const skip = (page - 1) * limit;
-    const projects = await Project.find()
+
+    let filter = {};
+    if (req.user.role !== "super-admin") {
+      const orgAdminId = resolveOrgAdminId(req.user);
+      if (!orgAdminId) {
+        filter = { _id: { $exists: false } };
+      } else {
+        const creatorIds = await getOrgCreatorUserIds(orgAdminId);
+        filter = { user: { $in: creatorIds } };
+      }
+    }
+
+    const totalProjects = await Project.countDocuments(filter);
+    const projects = await Project.find(filter)
       .skip(skip)
       .limit(limit)
       .sort({ createdAt: -1 });
+    const totalPages = Math.ceil(totalProjects / limit) || 1;
     return res.status(200).json({
       success: true,
       message: "Projects fetched successfully",
       projects,
-      totalProjects: projects.length,
-      totalPages: Math.ceil(projects.length / limit),
+      totalProjects,
+      totalPages,
       currentPage: page,
-      nextPage: page < Math.ceil(projects.length / limit) ? page + 1 : null,
+      nextPage: page < totalPages ? page + 1 : null,
       previousPage: page > 1 ? page - 1 : null,
     });
   } catch (error) {
@@ -62,6 +79,25 @@ export const getProjectById = async (req, res) => {
         message: "Project not found",
       });
     }
+
+    if (req.user.role !== "super-admin") {
+      const orgAdminId = resolveOrgAdminId(req.user);
+      if (!orgAdminId) {
+        return res.status(403).json({
+          success: false,
+          message: "You are not allowed to view this project",
+        });
+      }
+      const creatorIds = await getOrgCreatorUserIds(orgAdminId);
+      const allowed = creatorIds.some((id) => id.equals(project.user));
+      if (!allowed) {
+        return res.status(403).json({
+          success: false,
+          message: "You are not allowed to view this project",
+        });
+      }
+    }
+
     return res.status(200).json({
       success: true,
       message: "Project fetched successfully",
@@ -82,19 +118,37 @@ export const updateProject = async (req, res) => {
   const { projectName, description } = req.body;
 
   try {
-    const project = await Project.findByIdAndUpdate(
-      projectId,
-      { projectName, description, 
-        // user: userId 
-    },
-      { new: true }
-    );
-    if (!project) {
+    const existing = await Project.findById(projectId);
+    if (!existing) {
       return res.status(400).json({
         success: false,
         message: "Project not found",
       });
     }
+
+    if (req.user.role !== "super-admin") {
+      const orgAdminId = resolveOrgAdminId(req.user);
+      if (!orgAdminId) {
+        return res.status(403).json({
+          success: false,
+          message: "You are not allowed to update this project",
+        });
+      }
+      const creatorIds = await getOrgCreatorUserIds(orgAdminId);
+      const allowed = creatorIds.some((id) => id.equals(existing.user));
+      if (!allowed) {
+        return res.status(403).json({
+          success: false,
+          message: "You are not allowed to update this project",
+        });
+      }
+    }
+
+    const project = await Project.findByIdAndUpdate(
+      projectId,
+      { projectName, description },
+      { new: true }
+    );
 
     return res.status(200).json({
       success: true,
@@ -114,13 +168,33 @@ export const deleteProject = async (req, res) => {
     const projectId = req.params.id
 
     try {
-        const project = await Project.findByIdAndDelete(projectId)
-        if (!project) {
+        const existing = await Project.findById(projectId);
+        if (!existing) {
             return res.status(400).json({
                 success: false,
                 message: "Project not found",
-            })
+            });
         }
+
+        if (req.user.role !== "super-admin") {
+          const orgAdminId = resolveOrgAdminId(req.user);
+          if (!orgAdminId) {
+            return res.status(403).json({
+              success: false,
+              message: "You are not allowed to delete this project",
+            });
+          }
+          const creatorIds = await getOrgCreatorUserIds(orgAdminId);
+          const allowed = creatorIds.some((id) => id.equals(existing.user));
+          if (!allowed) {
+            return res.status(403).json({
+              success: false,
+              message: "You are not allowed to delete this project",
+            });
+          }
+        }
+
+        const project = await Project.findByIdAndDelete(projectId);
         return res.status(200).json({
             success: true,
             message: "Project deleted successfully",

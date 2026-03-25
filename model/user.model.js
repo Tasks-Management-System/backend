@@ -114,6 +114,12 @@ const userSchema = new mongoose.Schema(
       type: Boolean,
       default: true,
     },
+    /** Admin who manages this user (employees / hr / manager under an admin). */
+    managedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+    },
     isEmailVerified: {
       type: Boolean,
       default: false,

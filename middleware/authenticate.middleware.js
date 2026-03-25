@@ -30,6 +30,7 @@ export const authenticateMiddleware = async (req, res, next) => {
       name: user.name,
       email: user.email,
       role: Array.isArray(user.role) ? user.role[0] : user.role,
+      managedBy: user.managedBy ?? null,
     };
 
     next();
