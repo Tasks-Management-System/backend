@@ -8,6 +8,7 @@ import '../validation/task.validation.js';
 import '../validation/leave.validation.js';
 import '../validation/salary.validation.js';
 import '../validation/hiring.validation.js';
+import '../validation/notes.validation.js';
 
 export function generateOpenAPIDocument() {
   const generator = new OpenApiGeneratorV3(registry.definitions);

@@ -12,6 +12,7 @@ import leaveRoutes from "./routes/leave.routes.js";
 import hiringRoutes from "./routes/hiring.route.js";
 import salaryRoutes from "./routes/salary.routes.js";
 import { generateOpenAPIDocument } from "./swagger/index.js";
+import notesRoutes from "./routes/notes.routes.js";
 
 dotenv.config();
 
@@ -40,6 +41,7 @@ app.use("/api/v1/attendance", attendanceRoutes);
 app.use("/api/v1/leave", leaveRoutes);
 app.use("/api/v1/hiring", hiringRoutes);
 app.use("/api/v1/salary", salaryRoutes);
+app.use("/api/v1/notes", notesRoutes);
 
 const swaggerDocument = generateOpenAPIDocument();
 app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerDocument));

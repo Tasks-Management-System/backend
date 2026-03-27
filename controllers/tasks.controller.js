@@ -37,6 +37,13 @@ async function taskAccessibleByUser(taskDoc, reqUser) {
   return taskDoc.assignedTo?.toString() === reqUser._id.toString();
 }
 
+const ROLES_CAN_ASSIGN_OTHERS = new Set([
+  "super-admin",
+  "admin",
+  "manager",
+  "hr",
+]);
+
 export const createTask = async (req, res) => {
   const { project, assignedTo, taskName, description, dueDate, priority, status } = req.body;
 
@@ -63,8 +70,24 @@ export const createTask = async (req, res) => {
       }
     }
 
-    if (assignedTo) {
-      const user = await User.findById(assignedTo);
+    const canAssignOthers = ROLES_CAN_ASSIGN_OTHERS.has(req.user.role);
+    let assigneeId = assignedTo;
+
+    if (!canAssignOthers) {
+      if (
+        assignedTo &&
+        String(assignedTo) !== String(req.user._id)
+      ) {
+        return res.status(403).json({
+          success: false,
+          message: "You can only create tasks assigned to yourself",
+        });
+      }
+      assigneeId = req.user._id;
+    }
+
+    if (assigneeId) {
+      const user = await User.findById(assigneeId);
       if (!user) {
         return res.status(404).json({
           success: false,
@@ -73,7 +96,7 @@ export const createTask = async (req, res) => {
       }
       if (req.user.role !== "super-admin") {
         const orgAdminId = resolveOrgAdminId(req.user);
-        const allowed = await userBelongsToOrg(assignedTo, orgAdminId);
+        const allowed = await userBelongsToOrg(assigneeId, orgAdminId);
         if (!allowed) {
           return res.status(403).json({
             success: false,
@@ -84,7 +107,7 @@ export const createTask = async (req, res) => {
     }
     const newTask = await Task.create({
       project,
-      assignedTo: assignedTo || undefined,
+      assignedTo: assigneeId || undefined,
       taskName,
       description: description ?? "",
       dueDate: dueDate ? new Date(dueDate) : null,

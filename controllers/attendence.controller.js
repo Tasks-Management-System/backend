@@ -239,21 +239,53 @@ export const punchOut = async (req, res) => {
   }
 };
 
+function parseLocalDateQuery(dateParam) {
+  if (dateParam === undefined || dateParam === null || String(dateParam).trim() === "") {
+    return null;
+  }
+  const s = String(dateParam).trim();
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+  if (!m) return false;
+  const y = Number(m[1]);
+  const mo = Number(m[2]) - 1;
+  const d = Number(m[3]);
+  const day = new Date(y, mo, d);
+  day.setHours(0, 0, 0, 0);
+  if (day.getFullYear() !== y || day.getMonth() !== mo || day.getDate() !== d) {
+    return false;
+  }
+  return day;
+}
+
 export const getAttendance = async (req, res) => {
   try {
     const { _id: userId, role } = req.user;
 
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    let day;
+    const parsed = parseLocalDateQuery(req.query.date);
+    if (parsed === false) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid date. Use YYYY-MM-DD.",
+      });
+    }
+    if (parsed) {
+      day = parsed;
+    } else {
+      day = new Date();
+      day.setHours(0, 0, 0, 0);
+    }
+
+    const canSeeAll = role === "admin" || role === "super-admin";
 
     let attendance;
 
-    if (role === "admin") {
-      attendance = await Attendance.find({ date: today })
-        .sort({ date: -1 })
+    if (canSeeAll) {
+      attendance = await Attendance.find({ date: day })
+        .sort({ createdAt: -1 })
         .populate("user", "name email role");
     } else {
-      attendance = await Attendance.find({ user: userId, date: today })
+      attendance = await Attendance.find({ user: userId, date: day })
         .sort({ date: -1 })
         .populate("user", "name email role");
     }
@@ -262,11 +294,11 @@ export const getAttendance = async (req, res) => {
 
     return res.status(200).json({
       success: true,
-      message:
-        role === "admin"
-          ? "All users' attendance fetched successfully"
-          : "Your attendance fetched successfully",
+      message: canSeeAll
+        ? "All users' attendance fetched successfully"
+        : "Your attendance fetched successfully",
       attendance: enriched,
+      date: day.toISOString(),
     });
   } catch (error) {
     console.error("❌ Error fetching attendance:", error);

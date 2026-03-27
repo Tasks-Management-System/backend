@@ -15,7 +15,13 @@ import {
 
 const router = express.Router();
 
-router.post('/create', authenticateMiddleware, authorize('admin', 'manager'), validate({ body: CreateTaskBodySchema }), createTask);
+router.post(
+  '/create',
+  authenticateMiddleware,
+  authorize('super-admin', 'admin', 'manager', 'hr', 'employee'),
+  validate({ body: CreateTaskBodySchema }),
+  createTask
+);
 router.get('/', authenticateMiddleware, validate({ query: TaskQuerySchema }), getTasks);
 router.post('/query/:id', authenticateMiddleware, validate({ params: TaskIdParamSchema, body: AddQueryBodySchema }), addQuery);
 router.post('/reply/:taskId/:queryId', authenticateMiddleware, authorize('admin', 'manager'), validate({ params: ReplyQueryParamSchema, body: ReplyQueryBodySchema }), replyQuery);
