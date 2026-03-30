@@ -257,49 +257,107 @@ function parseLocalDateQuery(dateParam) {
   return day;
 }
 
+const MAX_ATTENDANCE_RANGE_DAYS = 14;
+
 export const getAttendance = async (req, res) => {
   try {
     const { _id: userId, role } = req.user;
 
-    let day;
-    const parsed = parseLocalDateQuery(req.query.date);
-    if (parsed === false) {
+    const dateQ = parseLocalDateQuery(req.query.date);
+    const fromQ = parseLocalDateQuery(req.query.from);
+    const toQ = parseLocalDateQuery(req.query.to);
+
+    if (dateQ === false || fromQ === false || toQ === false) {
       return res.status(400).json({
         success: false,
         message: "Invalid date. Use YYYY-MM-DD.",
       });
     }
-    if (parsed) {
-      day = parsed;
-    } else {
-      day = new Date();
-      day.setHours(0, 0, 0, 0);
-    }
+
+    const hasRange = Boolean(fromQ && toQ);
 
     const canSeeAll = role === "admin" || role === "super-admin";
 
     let attendance;
+    let day;
+    let dateFrom;
+    let dateTo;
 
-    if (canSeeAll) {
-      attendance = await Attendance.find({ date: day })
-        .sort({ createdAt: -1 })
-        .populate("user", "name email role");
+    if (hasRange) {
+      if (fromQ.getTime() > toQ.getTime()) {
+        return res.status(400).json({
+          success: false,
+          message: "`from` must be on or before `to`.",
+        });
+      }
+      const spanDays =
+        Math.floor((toQ.getTime() - fromQ.getTime()) / 86400000) + 1;
+      if (spanDays > MAX_ATTENDANCE_RANGE_DAYS) {
+        return res.status(400).json({
+          success: false,
+          message: `Date range cannot exceed ${MAX_ATTENDANCE_RANGE_DAYS} days.`,
+        });
+      }
+      dateFrom = fromQ;
+      dateTo = toQ;
+
+      if (canSeeAll) {
+        attendance = await Attendance.find({
+          date: { $gte: dateFrom, $lte: dateTo },
+        })
+          .sort({ date: 1, createdAt: -1 })
+          .populate("user", "name email role");
+      } else {
+        attendance = await Attendance.find({
+          user: userId,
+          date: { $gte: dateFrom, $lte: dateTo },
+        })
+          .sort({ date: 1 })
+          .populate("user", "name email role");
+      }
     } else {
-      attendance = await Attendance.find({ user: userId, date: day })
-        .sort({ date: -1 })
-        .populate("user", "name email role");
+      if (dateQ) {
+        day = dateQ;
+      } else {
+        day = new Date();
+        day.setHours(0, 0, 0, 0);
+      }
+      dateFrom = day;
+      dateTo = day;
+
+      if (canSeeAll) {
+        attendance = await Attendance.find({ date: day })
+          .sort({ createdAt: -1 })
+          .populate("user", "name email role");
+      } else {
+        attendance = await Attendance.find({ user: userId, date: day })
+          .sort({ date: -1 })
+          .populate("user", "name email role");
+      }
     }
 
     const enriched = attendance.map((a) => enrichAttendance(a));
 
-    return res.status(200).json({
+    const payload = {
       success: true,
       message: canSeeAll
-        ? "All users' attendance fetched successfully"
-        : "Your attendance fetched successfully",
+        ? hasRange
+          ? "Team attendance for the selected range"
+          : "All users' attendance fetched successfully"
+        : hasRange
+          ? "Your attendance for the selected range"
+          : "Your attendance fetched successfully",
       attendance: enriched,
-      date: day.toISOString(),
-    });
+    };
+
+    if (hasRange) {
+      payload.dateFrom = dateFrom.toISOString();
+      payload.dateTo = dateTo.toISOString();
+    } else {
+      payload.date = day.toISOString();
+    }
+
+    return res.status(200).json(payload);
   } catch (error) {
     console.error("❌ Error fetching attendance:", error);
     return res.status(500).json({

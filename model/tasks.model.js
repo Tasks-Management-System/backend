@@ -52,7 +52,7 @@ const taskSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ["pending", "in_progress", "completed"],
+      enum: ["pending", "in_progress", "review", "completed"],
       default: "pending",
     },
     queries:{
@@ -74,15 +74,18 @@ const taskSchema = new mongoose.Schema(
 );
 
 taskSchema.pre("save", async function (next) {
-  if (this.isModified("status") && this.status === "in_progress") {
-    this.startTime = new Date();
-    if (this.isModified("status") && this.status === "completed") {
+  if (this.isModified("status")) {
+    if (this.status === "in_progress" && !this.startTime) {
+      this.startTime = new Date();
+    }
+    if (this.status === "completed" && !this.endTime) {
       this.endTime = new Date();
-      const timeDiff = this.endTime - this.startTime;
-      this.totalTime = timeDiff;
+      if (this.startTime) {
+        this.totalTime = this.endTime - this.startTime;
+      }
     }
   }
-  next()
+  next();
 });
 
 const Task = mongoose.model("Task", taskSchema)

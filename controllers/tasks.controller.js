@@ -267,16 +267,19 @@ export const updateTask = async (req, res) => {
     const { status, taskName, priority, description, dueDate, archived } = req.body;
 
     if (status) {
-      // If moving to "in_progress" → start timer
+      // Start work timer when entering in_progress (not on review)
       if (status === "in_progress" && !task.startTime) {
         task.startTime = new Date();
       }
 
-      // If moving to "completed" → stop timer
+      // Review: no timer change (work paused for approval)
+
+      // Stop timer when completed
       if (status === "completed" && !task.endTime) {
         task.endTime = new Date();
-        const timeDiff = task.endTime - task.startTime;
-        task.totalTime = timeDiff;
+        if (task.startTime) {
+          task.totalTime = task.endTime - task.startTime;
+        }
       }
 
       task.status = status;

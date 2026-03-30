@@ -10,7 +10,7 @@ export const CreateTaskBodySchema = z
     description: z.string().optional().openapi({ example: 'Add JWT and refresh flow' }),
     dueDate: z.string().optional().openapi({ example: '2025-12-31' }),
     priority: z.enum(['low', 'medium', 'urgent']).optional().openapi({ example: 'medium' }),
-    status: z.enum(['pending', 'in_progress', 'completed']).optional().openapi({ example: 'pending' }),
+    status: z.enum(['pending', 'in_progress', 'review', 'completed']).optional().openapi({ example: 'pending' }),
   })
   .openapi('CreateTaskBody');
 
@@ -20,7 +20,7 @@ export const UpdateTaskBodySchema = z
     description: z.string().optional(),
     dueDate: z.string().nullable().optional(),
     archived: z.boolean().optional(),
-    status: z.enum(['pending', 'in_progress', 'completed']).optional().openapi({ example: 'in_progress' }),
+    status: z.enum(['pending', 'in_progress', 'review', 'completed']).optional().openapi({ example: 'in_progress' }),
     priority: z.enum(['low', 'medium', 'urgent']).optional(),
   })
   .openapi('UpdateTaskBody');
