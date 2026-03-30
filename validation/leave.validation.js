@@ -63,6 +63,18 @@ registry.registerPath({
 
 registry.registerPath({
   method: 'get',
+  path: '/leave/pending',
+  tags: ['Leave'],
+  summary: 'Pending leave requests (admin / HR / super-admin)',
+  security: bearerAuth,
+  responses: {
+    200: { description: 'Pending requests with employee details' },
+    403: { description: 'Forbidden' },
+  },
+});
+
+registry.registerPath({
+  method: 'get',
   path: '/leave/{id}',
   tags: ['Leave'],
   summary: 'Get leave by ID',

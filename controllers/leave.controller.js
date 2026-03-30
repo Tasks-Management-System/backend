@@ -125,7 +125,7 @@ export const updateLeaveStatus = async (req, res) => {
     const loggedInUser = req.user; // from auth middleware
 
     // ✅ Only admin or HR can update leave status
-    if (!["admin", "hr"].includes(loggedInUser.role)) {
+    if (!["admin", "hr", "super-admin"].includes(loggedInUser.role)) {
       return res.status(403).json({
         success: false,
         message: "Access denied. Only admin or HR can change leave status.",
@@ -218,6 +218,28 @@ export const getLeaveHistory = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error fetching leave history",
+      error: error.message,
+    });
+  }
+};
+
+/** All pending requests company-wide — for HR / admin review queues. */
+export const getPendingLeaveRequests = async (req, res) => {
+  try {
+    const leaves = await Leave.find({ status: "pending" })
+      .populate("user", "name email")
+      .sort({ createdAt: -1 })
+      .lean();
+
+    res.status(200).json({
+      success: true,
+      message: "Pending leave requests fetched successfully",
+      leaves,
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: "Error fetching pending leave requests",
       error: error.message,
     });
   }

@@ -1,7 +1,13 @@
 import express from 'express';
 import { authenticateMiddleware } from '../middleware/authenticate.middleware.js';
 import { authorize } from '../middleware/authorize.middleware.js';
-import { applyLeave, getLeaveById, getLeaveHistory, updateLeaveStatus } from '../controllers/leave.controller.js';
+import {
+  applyLeave,
+  getLeaveById,
+  getLeaveHistory,
+  getPendingLeaveRequests,
+  updateLeaveStatus,
+} from '../controllers/leave.controller.js';
 import { validate } from '../middleware/validate.middleware.js';
 import {
   ApplyLeaveBodySchema,
@@ -12,7 +18,8 @@ import {
 const router = express.Router();
 
 router.post('/apply', authenticateMiddleware, authorize('employee', 'hr', 'manager'), validate({ body: ApplyLeaveBodySchema }), applyLeave);
-router.put('/:id', authenticateMiddleware, authorize('admin', 'hr'), validate({ params: LeaveIdParamSchema, body: UpdateLeaveStatusBodySchema }), updateLeaveStatus);
+router.get('/pending', authenticateMiddleware, authorize('admin', 'hr', 'super-admin'), getPendingLeaveRequests);
+router.put('/:id', authenticateMiddleware, authorize('admin', 'hr', 'super-admin'), validate({ params: LeaveIdParamSchema, body: UpdateLeaveStatusBodySchema }), updateLeaveStatus);
 router.get('/', authenticateMiddleware, getLeaveHistory);
 router.get('/:id', authenticateMiddleware, validate({ params: LeaveIdParamSchema }), getLeaveById);
 
