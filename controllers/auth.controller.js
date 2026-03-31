@@ -231,6 +231,14 @@ export const loginUser = async (req, res) => {
         message: "Please verify your email before logging in",
       });
     }
+    if (user.isActive === false) {
+      return res.status(403).json({
+        success: false,
+        code: "ACCOUNT_INACTIVE",
+        message:
+          "Your account has been deactivated. Please contact an administrator to restore access.",
+      });
+    }
     const isPasswordCorrect = await user.comparePassword(password);
     if (!isPasswordCorrect) {
       return res.status(400).json({
@@ -348,6 +356,7 @@ export const updateUser = async (req, res) => {
     bankIFSC,
     bankBranch,
     gender,
+    isActive,
   } = req.body;
 
   const profileImage = req.file ? req.file.path : req.body.profileImage;
@@ -394,6 +403,35 @@ export const updateUser = async (req, res) => {
       }
     }
 
+    const actorRoleFlat =
+      Array.isArray(req.user?.role) ? req.user.role[0] : req.user?.role;
+
+    if (isActive !== undefined) {
+      if (!["super-admin", "admin"].includes(actorRoleFlat)) {
+        return res.status(403).json({
+          success: false,
+          message: "Only an admin or super-admin can change account active status",
+        });
+      }
+      if (userId === req.user._id.toString()) {
+        return res.status(400).json({
+          success: false,
+          message: "You cannot change the active status of your own account",
+        });
+      }
+      const targetRoles = targetBefore?.role
+        ? Array.isArray(targetBefore.role)
+          ? targetBefore.role
+          : [targetBefore.role]
+        : [];
+      if (actorRoleFlat === "admin" && targetRoles.includes("super-admin")) {
+        return res.status(403).json({
+          success: false,
+          message: "Only a super-admin can change status for a super-admin account",
+        });
+      }
+    }
+
     const updateData = {
       ...(name !== undefined && { name }),
       ...(email !== undefined && { email }),
@@ -414,10 +452,9 @@ export const updateUser = async (req, res) => {
       ...(education !== undefined && { education }),
       ...(experience !== undefined && { experience }),
       ...(leaves !== undefined && { leaves }),
+      ...(isActive !== undefined && { isActive: Boolean(isActive) }),
     };
 
-    const actorRoleFlat =
-      Array.isArray(req.user?.role) ? req.user.role[0] : req.user?.role;
     if (actorRoleFlat === "admin" && userId !== req.user._id.toString()) {
       const effectiveRoles = normalizedRole
         ? normalizedRole
@@ -586,6 +623,14 @@ export const refreshToken = async (req, res) => {
       return res.status(400).json({
         success: false,
         message: "User not found",
+      });
+    }
+    if (user.isActive === false) {
+      return res.status(403).json({
+        success: false,
+        code: "ACCOUNT_INACTIVE",
+        message:
+          "Your account has been deactivated. Please contact an administrator to restore access.",
       });
     }
     const token = jwt.sign({ id: user._id, role: user.role }, process.env.JWT_SECRET, {

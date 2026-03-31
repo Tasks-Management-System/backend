@@ -24,6 +24,15 @@ export const authenticateMiddleware = async (req, res, next) => {
       });
     }
 
+    if (user.isActive === false) {
+      return res.status(403).json({
+        success: false,
+        code: "ACCOUNT_INACTIVE",
+        message:
+          "Your account has been deactivated. You have been signed out. Please contact an administrator if you need access.",
+      });
+    }
+
     // ✅ Attach role and _id properly
     req.user = {
       _id: user._id,

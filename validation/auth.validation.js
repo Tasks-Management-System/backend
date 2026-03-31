@@ -101,6 +101,9 @@ export const UpdateUserBodySchema = z
     bankIFSC: z.string().optional(),
     bankBranch: z.string().optional(),
     gender: z.enum(['male', 'female']).optional(),
+    isActive: z.boolean().optional().openapi({
+      description: 'Only super-admin or admin may set this (deactivated users cannot log in or use the API).',
+    }),
   })
   .openapi('UpdateUserBody');
 
