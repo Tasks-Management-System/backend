@@ -257,7 +257,8 @@ function parseLocalDateQuery(dateParam) {
   return day;
 }
 
-const MAX_ATTENDANCE_RANGE_DAYS = 14;
+/** Allows month-wide calendar views in a single range query. */
+const MAX_ATTENDANCE_RANGE_DAYS = 62;
 
 export const getAttendance = async (req, res) => {
   try {

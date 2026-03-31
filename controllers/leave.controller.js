@@ -3,6 +3,105 @@ import User from "../model/user.model.js";
 import { leaveRequestTemplate } from "../utils/mailService/leaveRequestTemplate.js";
 import { leaveStatusTemplate } from "../utils/mailService/leaveStatusTemplat.js";
 import { sendEmail } from "../utils/mailService/sendMail.js";
+import { signLeaveEmailActionToken, verifyLeaveEmailActionToken } from "../utils/leaveEmailActionToken.js";
+
+/** Calendar days for this leave (0.5 for half-day). */
+function computeLeaveDayCount(leave) {
+  let totalDays = 1;
+  if (leave.days === "multiple" && leave.fromDate && leave.toDate) {
+    const diff =
+      new Date(leave.toDate).getTime() - new Date(leave.fromDate).getTime();
+    totalDays = Math.ceil(diff / (1000 * 60 * 60 * 24)) + 1;
+  }
+  if (leave.subType === "halfDay") totalDays = 0.5;
+  return totalDays;
+}
+
+function refundReservedBalances(user, leave, totalDays) {
+  if (!user?.leaves?.length) return;
+  const b = user.leaves[0];
+  let fromPaid = Number(leave.deductedFromPaid) || 0;
+  let fromAnnual = Number(leave.deductedFromAnnual) || 0;
+  // New requests store deductedFrom*; legacy paid-only rows may lack them
+  if (fromPaid === 0 && fromAnnual === 0 && leave.type === "paidLeave") {
+    fromPaid = totalDays;
+  }
+  b.paidLeave = Number(b.paidLeave) + fromPaid;
+  b.totalBalance = Number(b.totalBalance) + fromAnnual;
+  user.markModified("leaves");
+}
+
+/**
+ * Updates balances, leave status, emails employee. Caller enforces auth / duplicate checks.
+ * @param {import("mongoose").Document} leave populated with `user`
+ */
+async function persistLeaveStatusChange(leave, status, adminComment) {
+  const user = leave.user;
+  if (!user) {
+    throw new Error("Employee record not found for this leave");
+  }
+
+  const totalDays = computeLeaveDayCount(leave);
+  const prevStatus = leave.status;
+
+  if (!user.leaves || user.leaves.length === 0) {
+    user.leaves = [{ totalBalance: 24, paidLeave: 12, leaveTaken: 0 }];
+  }
+  const leaveBalance = user.leaves[0];
+
+  if (status === "approved" && prevStatus === "pending") {
+    leaveBalance.leaveTaken = Number(leaveBalance.leaveTaken) + totalDays;
+    user.markModified("leaves");
+    await user.save();
+  }
+
+  if (status === "rejected" && user.leaves?.length > 0) {
+    if (prevStatus === "pending") {
+      refundReservedBalances(user, leave, totalDays);
+      await user.save();
+    } else if (prevStatus === "approved") {
+      leaveBalance.leaveTaken = Math.max(
+        0,
+        Number(leaveBalance.leaveTaken) - totalDays
+      );
+      refundReservedBalances(user, leave, totalDays);
+      user.markModified("leaves");
+      await user.save();
+    }
+  }
+
+  leave.status = status;
+  leave.adminComment = adminComment || "";
+  await leave.save();
+
+  const html = leaveStatusTemplate({
+    employeeName: user.name,
+    status,
+    leaveType: leave.type,
+    fromDate: leave.fromDate,
+    toDate: leave.toDate,
+  });
+  await sendEmail(user.email, "Leave Status Update", html);
+}
+
+function leaveEmailActionBaseUrl() {
+  const raw =
+    process.env.PUBLIC_LEAVE_API_BASE ||
+    `http://localhost:${process.env.PORT || 5051}/api/v1/leave`;
+  return String(raw).replace(/\/$/, "");
+}
+
+function htmlResultPage(title, message) {
+  const t = String(title).replace(/</g, "&lt;");
+  const m = String(message).replace(/</g, "&lt;");
+  return `<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><title>${t}</title></head>
+<body style="font-family:system-ui,sans-serif;max-width:480px;margin:48px auto;padding:0 16px;color:#111;">
+  <h1 style="font-size:1.25rem;margin:0 0 12px;">${t}</h1>
+  <p style="margin:0;line-height:1.5;color:#444;">${m}</p>
+</body></html>`;
+}
 
 export const applyLeave = async (req, res) => {
   const { days, subType, fromDate, toDate, reason } = req.body;
@@ -52,6 +151,8 @@ export const applyLeave = async (req, res) => {
     });
 
     let leaveType = "unpaidLeave";
+    let deductedFromPaid = 0;
+    let deductedFromAnnual = 0;
 
     let totalDays = 1; // default single day
     if (days === "multiple") {
@@ -68,16 +169,18 @@ export const applyLeave = async (req, res) => {
     if (existingLeaves.length === 0 && leaveBalance.paidLeave > 0) {
       leaveType = "paidLeave";
       leaveBalance.paidLeave -= totalDays;
+      deductedFromPaid = totalDays;
     } else {
       // If already taken or requested paid leave this month
       if (leaveBalance.totalBalance >= totalDays) {
         leaveBalance.totalBalance -= totalDays;
+        deductedFromAnnual = totalDays;
       } else {
         leaveType = "unpaidLeave";
       }
     }
 
-    // Create leave record
+    // Create leave record (leaveTaken is updated only when HR approves — not on apply)
     const leave = await Leave.create({
       user: userId,
       type: leaveType,
@@ -86,20 +189,32 @@ export const applyLeave = async (req, res) => {
       fromDate,
       toDate: days === "multiple" ? toDate : fromDate,
       reason,
+      deductedFromPaid,
+      deductedFromAnnual,
     });
 
-    leaveBalance.leaveTaken += totalDays;
     user.markModified("leaves");
     await user.save();
 
     const hrEmail = process.env.ADMIN_EMAIL;
+    const base = leaveEmailActionBaseUrl();
+    const lid = leave._id.toString();
+    const approveUrl = `${base}/email-action?token=${encodeURIComponent(signLeaveEmailActionToken(lid, "approve"))}`;
+    const rejectUrl = `${base}/email-action?token=${encodeURIComponent(signLeaveEmailActionToken(lid, "reject"))}`;
+    const reviewInAppUrl = process.env.FRONTEND_URL
+      ? `${String(process.env.FRONTEND_URL).replace(/\/$/, "")}/leave`
+      : "";
+
     const html = leaveRequestTemplate({
       employeeName: user.name,
       leaveType: leaveType,
       fromDate: fromDate,
       toDate: toDate,
       reason: reason,
-    })
+      approveUrl,
+      rejectUrl,
+      reviewInAppUrl,
+    });
 
     await sendEmail(hrEmail, "New Leave Request Submitted", html);
     console.log("Email sent to HR");
@@ -157,39 +272,15 @@ export const updateLeaveStatus = async (req, res) => {
     }
 
     const user = leave.user;
-
-    // ✅ Handle rejected leaves — refund balances
-    if (status === "rejected" && user && user.leaves?.length > 0) {
-      const leaveBalance = user.leaves[0];
-
-      if (leave.type === "paidLeave") {
-        leaveBalance.paidLeave += 1;
-      } else if (
-        leave.type === "unpaidLeave" &&
-        leaveBalance.totalBalance < 24
-      ) {
-        leaveBalance.totalBalance += 1;
-      }
-
-      user.markModified("leaves");
-      await user.save();
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "Employee record not found for this leave",
+      });
     }
 
-    // ✅ Update leave record
-    leave.status = status;
-    leave.adminComment = adminComment || "";
-    await leave.save();
-
-    const html = leaveStatusTemplate({
-      employeeName: user.name,
-      status: status,
-      leaveType: leave.type,
-      fromDate: leave.fromDate,
-      toDate: leave.toDate,
-    })
-    await sendEmail(user.email, "Leave Status Update", html);
+    await persistLeaveStatusChange(leave, status, adminComment || "");
     console.log(`Email sent to ${user.email}`);
-
 
     res.status(200).json({
       success: true,
@@ -205,14 +296,130 @@ export const updateLeaveStatus = async (req, res) => {
   }
 };
 
+/** One-click approve/reject from HR email (signed JWT, no session). */
+export const leaveEmailAction = async (req, res) => {
+  try {
+    const token = req.query.token;
+    if (!token || typeof token !== "string") {
+      return res
+        .status(400)
+        .type("html")
+        .send(htmlResultPage("Invalid link", "This link is missing a token. Open the app to review leave requests."));
+    }
+
+    let lid;
+    let act;
+    try {
+      ({ lid, act } = verifyLeaveEmailActionToken(token));
+    } catch {
+      return res
+        .status(400)
+        .type("html")
+        .send(
+          htmlResultPage(
+            "Link expired or invalid",
+            "Ask the employee to resubmit or review this request in the app under Leave → Team inbox."
+          )
+        );
+    }
+
+    const status = act === "approve" ? "approved" : "rejected";
+    const leave = await Leave.findById(lid).populate("user");
+    if (!leave) {
+      return res
+        .status(404)
+        .type("html")
+        .send(htmlResultPage("Not found", "This leave request no longer exists."));
+    }
+
+    if (leave.status !== "pending") {
+      return res
+        .status(200)
+        .type("html")
+        .send(
+          htmlResultPage(
+            "Already processed",
+            `This request is already ${leave.status}. No change was made.`
+          )
+        );
+    }
+
+    const comment =
+      status === "approved"
+        ? "Approved via email link"
+        : "Rejected via email link";
+
+    await persistLeaveStatusChange(leave, status, comment);
+
+    return res
+      .status(200)
+      .type("html")
+      .send(
+        htmlResultPage(
+          status === "approved" ? "Leave approved" : "Leave rejected",
+          "The employee has been notified by email. You can close this tab."
+        )
+      );
+  } catch (err) {
+    console.error("leaveEmailAction", err);
+    return res
+      .status(500)
+      .type("html")
+      .send(
+        htmlResultPage(
+          "Something went wrong",
+          "Please sign in and use Leave → Team inbox to approve or reject this request."
+        )
+      );
+  }
+};
+
 export const getLeaveHistory = async (req, res) => {
   try {
     const userId = req.user._id;
-    const leaves = await Leave.find({ user: userId }).sort({ createdAt: -1 });
-    res.status(200).json({
+    const q = req.query;
+    const hasPage = q.page !== undefined && q.page !== "";
+    const hasLimit = q.limit !== undefined && q.limit !== "";
+    const usePagination = hasPage || hasLimit;
+
+    if (!usePagination) {
+      const leaves = await Leave.find({ user: userId }).sort({ createdAt: -1 }).lean();
+      return res.status(200).json({
+        success: true,
+        message: "Leave history fetched successfully",
+        leaves,
+      });
+    }
+
+    const page = Math.max(1, parseInt(String(q.page), 10) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(String(q.limit), 10) || 10));
+    const filter = { user: userId };
+    const statusQ = q.status;
+    if (
+      statusQ &&
+      statusQ !== "all" &&
+      ["pending", "approved", "rejected"].includes(String(statusQ))
+    ) {
+      filter.status = String(statusQ);
+    }
+
+    const skip = (page - 1) * limit;
+    const [leaves, total] = await Promise.all([
+      Leave.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),
+      Leave.countDocuments(filter),
+    ]);
+    const totalPages = Math.max(1, Math.ceil(total / limit));
+
+    return res.status(200).json({
       success: true,
       message: "Leave history fetched successfully",
       leaves,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages,
+      },
     });
   } catch (error) {
     res.status(500).json({

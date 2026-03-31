@@ -23,6 +23,15 @@ export const LeaveIdParamSchema = z
   .object({ id: z.string().min(1).openapi({ example: '64b1f2c3d4e5f6a7b8c9d0e1' }) })
   .openapi('LeaveIdParam');
 
+/** Optional. If `page` or `limit` is sent, response includes `pagination` and a slice of `leaves`. Omit both for full list (e.g. calendar). */
+export const LeaveHistoryQuerySchema = z
+  .object({
+    page: z.coerce.number().int().min(1).optional(),
+    limit: z.coerce.number().int().min(1).max(100).optional(),
+    status: z.enum(['all', 'pending', 'approved', 'rejected']).optional(),
+  })
+  .openapi('LeaveHistoryQuery');
+
 registry.registerPath({
   method: 'post',
   path: '/leave/apply',

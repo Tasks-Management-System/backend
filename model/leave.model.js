@@ -40,6 +40,10 @@ const leaveSchema = new mongoose.Schema({
   adminComment: {
     type: String,
   },
+  /** Days reserved from paid pool at apply time (for accurate refund on reject) */
+  deductedFromPaid: { type: Number, default: 0 },
+  /** Days reserved from annual totalBalance at apply time */
+  deductedFromAnnual: { type: Number, default: 0 },
 }, { timestamps: true });
 
 const Leave = mongoose.model("Leave", leaveSchema);

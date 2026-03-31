@@ -1,5 +1,5 @@
+import "./loadEnv.js";
 import express from "express";
-import dotenv from "dotenv";
 import cors from "cors";
 import swaggerUi from "swagger-ui-express";
 import { connectDB } from "./utils/db.js";
@@ -13,8 +13,8 @@ import hiringRoutes from "./routes/hiring.route.js";
 import salaryRoutes from "./routes/salary.routes.js";
 import { generateOpenAPIDocument } from "./swagger/index.js";
 import notesRoutes from "./routes/notes.routes.js";
-
-dotenv.config();
+import eventRoutes from "./routes/event.routes.js";
+import { startReminderJob } from "./jobs/reminderJob.js";
 
 const app = express();
 app.use(cors(
@@ -26,8 +26,6 @@ app.use(cors(
 app.use(express.json());
 
 const PORT = process.env.PORT || 5051;
-
-connectDB();
 
 app.get("/", (req, res) => {
     res.send("Hello World");
@@ -42,12 +40,19 @@ app.use("/api/v1/leave", leaveRoutes);
 app.use("/api/v1/hiring", hiringRoutes);
 app.use("/api/v1/salary", salaryRoutes);
 app.use("/api/v1/notes", notesRoutes);
+app.use("/api/v1/events", eventRoutes);
 
 const swaggerDocument = generateOpenAPIDocument();
 app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerDocument));
 app.get("/api-docs.json", (req, res) => res.json(swaggerDocument));
 
-app.listen(PORT, () => {
+const startServer = async () => {
+  await connectDB();
+  startReminderJob();
+  app.listen(PORT, () => {
     console.log(`Server is running on port ${PORT}`);
     console.log(`Swagger UI: http://localhost:${PORT}/api-docs`);
-});
+  });
+};
+
+startServer();

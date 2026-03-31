@@ -14,6 +14,9 @@ export const leaveRequestTemplate = ({
   reason,
   appName = "Task Management System",
   actionUrl = "",
+  approveUrl = "",
+  rejectUrl = "",
+  reviewInAppUrl = "",
 }) => {
   const safeEmployeeName = escapeHtml(employeeName || "N/A");
   const safeLeaveType = escapeHtml(leaveType || "N/A");
@@ -22,6 +25,7 @@ export const leaveRequestTemplate = ({
   const safeReason = escapeHtml(reason || "N/A");
   const safeAppName = escapeHtml(appName);
   const safeActionUrl = escapeHtml(actionUrl);
+  const hasQuickAction = Boolean(approveUrl && rejectUrl);
 
   return `
 <!DOCTYPE html>
@@ -69,11 +73,41 @@ export const leaveRequestTemplate = ({
                   </tr>
                 </table>
                 ${
+                  hasQuickAction
+                    ? `<p style="margin:24px 0 8px;font-size:13px;font-weight:700;color:#374151;">Quick actions</p>
+                      <p style="margin:0 0 16px;font-size:13px;line-height:20px;color:#6b7280;">
+                        Click a button to approve or reject immediately. Links expire after 14 days.
+                      </p>
+                      <table role="presentation" cellspacing="0" cellpadding="0" style="margin:0 0 20px;">
+                        <tr>
+                          <td style="padding:0 12px 8px 0;">
+                            <a href="${approveUrl}" style="display:inline-block;background:#059669;color:#ffffff;text-decoration:none;font-size:14px;font-weight:700;padding:12px 20px;border-radius:8px;">
+                              Approve
+                            </a>
+                          </td>
+                          <td style="padding:0 0 8px 0;">
+                            <a href="${rejectUrl}" style="display:inline-block;background:#dc2626;color:#ffffff;text-decoration:none;font-size:14px;font-weight:700;padding:12px 20px;border-radius:8px;">
+                              Reject
+                            </a>
+                          </td>
+                        </tr>
+                      </table>`
+                    : ""
+                }
+                ${
                   actionUrl
                     ? `<p style="margin:20px 0 0;">
                         <a href="${safeActionUrl}" style="display:inline-block;background:#2563eb;color:#ffffff;text-decoration:none;font-size:14px;font-weight:700;padding:10px 16px;border-radius:6px;">
                           Review Request
                         </a>
+                      </p>`
+                    : ""
+                }
+                ${
+                  reviewInAppUrl
+                    ? `<p style="margin:16px 0 0;font-size:13px;line-height:20px;color:#6b7280;">
+                        Or open the app:
+                        <a href="${escapeHtml(reviewInAppUrl)}" style="color:#2563eb;font-weight:600;">Leave → Team inbox</a>
                       </p>`
                     : ""
                 }
