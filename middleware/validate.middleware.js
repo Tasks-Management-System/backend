@@ -22,11 +22,17 @@ export const validate = (schemas) => (req, res, next) => {
     next();
   } catch (error) {
     if (error instanceof ZodError) {
+      // Zod v3 exposes `errors`; Zod v4 exposes `issues`.
+      const issues = Array.isArray(error.errors)
+        ? error.errors
+        : Array.isArray(error.issues)
+          ? error.issues
+          : [];
       return res.status(400).json({
         success: false,
         message: 'Validation error',
-        errors: error.errors.map((e) => ({
-          field: e.path.join('.'),
+        errors: issues.map((e) => ({
+          field: Array.isArray(e.path) ? e.path.join('.') : '',
           message: e.message,
         })),
       });

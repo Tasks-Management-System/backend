@@ -17,6 +17,8 @@ import eventRoutes from "./routes/event.routes.js";
 import { startReminderJob } from "./jobs/reminderJob.js";
 
 const app = express();
+// Avoid 304 Not Modified for API JSON responses (frontend expects a body).
+app.set("etag", false);
 app.use(cors(
     {
         origin: process.env.FRONTEND_URL,
@@ -24,6 +26,13 @@ app.use(cors(
     }
 ));
 app.use(express.json());
+
+// Force APIs to be non-cacheable (prevents browser conditional requests / 304s).
+app.use("/api/v1", (_req, res, next) => {
+  res.setHeader("Cache-Control", "no-store");
+  res.setHeader("Pragma", "no-cache");
+  next();
+});
 
 const PORT = process.env.PORT || 5051;
 

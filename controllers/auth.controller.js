@@ -1,5 +1,6 @@
 import User from "../model/user.model.js";
 import jwt from "jsonwebtoken";
+import { OAuth2Client } from "google-auth-library";
 import {
   canAccessUserProfile,
   resolveOrgAdminId,
@@ -15,6 +16,35 @@ const buildLoginRedirectUrl = () => {
 };
 
 const ADMIN_ASSIGNABLE_ROLES = ["employee", "hr", "manager"];
+
+function getBackendBaseUrl(req) {
+  return (
+    process.env.BACKEND_URL ||
+    `${req.protocol}://${req.get("host")}`
+  ).replace(/\/$/, "");
+}
+
+function getFrontendBaseUrl() {
+  return (process.env.FRONTEND_URL || "http://localhost:5173").replace(/\/$/, "");
+}
+
+function buildGoogleRedirectUri(req) {
+  return `${getBackendBaseUrl(req)}/api/v1/auth/google/callback`;
+}
+
+function buildFrontendLoginUrl(pathAndQuery = "/login") {
+  const base = getFrontendBaseUrl();
+  const p = pathAndQuery.startsWith("/") ? pathAndQuery : `/${pathAndQuery}`;
+  return `${base}${p}`;
+}
+
+function signJwtForUser(user) {
+  return jwt.sign(
+    { id: user._id, role: user.role },
+    process.env.JWT_SECRET,
+    { expiresIn: process.env.JWT_EXPIRES_IN }
+  );
+}
 
 export const registerUser = async (req, res) => {
   try {
@@ -133,6 +163,18 @@ export const createUserByAdmin = async (req, res) => {
       phone,
       gender,
       dob,
+      profileImage,
+      address,
+      skills,
+      education,
+      experience,
+      leaves,
+      aadharCardNumber,
+      panCardNumber,
+      bankAccountNo,
+      bankName,
+      bankIFSC,
+      bankBranch,
     } = req.body;
 
     const actorRole = Array.isArray(req.user?.role)
@@ -183,9 +225,21 @@ export const createUserByAdmin = async (req, res) => {
       password,
       role: [requestedRole],
       managedBy,
+      profileImage: profileImage ?? undefined,
+      address: address ?? undefined,
       phone: phone ?? undefined,
       gender: gender ?? undefined,
       dob: dob ? new Date(dob) : undefined,
+      skills: skills ?? undefined,
+      education: education ?? undefined,
+      experience: experience ?? undefined,
+      leaves: leaves ?? undefined,
+      aadharCardNumber: aadharCardNumber ?? undefined,
+      panCardNumber: panCardNumber ?? undefined,
+      bankAccountNo: bankAccountNo ?? undefined,
+      bankName: bankName ?? undefined,
+      bankIFSC: bankIFSC ?? undefined,
+      bankBranch: bankBranch ?? undefined,
       isEmailVerified: true,
       emailVerificationToken: null,
       emailVerificationExpiresAt: null,
@@ -647,5 +701,143 @@ export const refreshToken = async (req, res) => {
       message: "Error refreshing token",
       error: error.message,
     });
+  }
+};
+
+export const googleAuthStart = async (req, res) => {
+  try {
+    const clientId = process.env.GOOGLE_CLIENT_ID;
+    if (!clientId) {
+      return res.status(500).json({
+        success: false,
+        message: "GOOGLE_CLIENT_ID is not configured on the backend",
+      });
+    }
+
+    const redirectUri = buildGoogleRedirectUri(req);
+    const state = crypto.randomBytes(16).toString("hex");
+
+    const authUrl = new URL("https://accounts.google.com/o/oauth2/v2/auth");
+    authUrl.searchParams.set("client_id", clientId);
+    authUrl.searchParams.set("redirect_uri", redirectUri);
+    authUrl.searchParams.set("response_type", "code");
+    authUrl.searchParams.set("scope", "openid email profile");
+    authUrl.searchParams.set("state", state);
+    authUrl.searchParams.set("prompt", "select_account");
+
+    return res.redirect(authUrl.toString());
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: "Failed to start Google authentication",
+      error: error.message,
+    });
+  }
+};
+
+export const googleAuthCallback = async (req, res) => {
+  const frontendLogin = buildFrontendLoginUrl("/login");
+  try {
+    const clientId = process.env.GOOGLE_CLIENT_ID;
+    const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+    if (!clientId || !clientSecret) {
+      return res.redirect(
+        `${frontendLogin}?google=fail&reason=missing_google_config`
+      );
+    }
+
+    const { code, error } = req.query;
+    if (error) {
+      return res.redirect(
+        `${frontendLogin}?google=fail&reason=${encodeURIComponent(String(error))}`
+      );
+    }
+    if (!code) {
+      return res.redirect(`${frontendLogin}?google=fail&reason=missing_code`);
+    }
+
+    const redirectUri = buildGoogleRedirectUri(req);
+
+    const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        code: String(code),
+        client_id: clientId,
+        client_secret: clientSecret,
+        redirect_uri: redirectUri,
+        grant_type: "authorization_code",
+      }),
+    });
+
+    const tokenJson = await tokenRes.json().catch(() => ({}));
+    if (!tokenRes.ok) {
+      return res.redirect(
+        `${frontendLogin}?google=fail&reason=token_exchange_failed&message=${encodeURIComponent(
+          tokenJson?.error_description || tokenJson?.error || "Token exchange failed"
+        )}`
+      );
+    }
+
+    const idToken = tokenJson?.id_token;
+    if (!idToken) {
+      return res.redirect(`${frontendLogin}?google=fail&reason=missing_id_token`);
+    }
+
+    const oAuthClient = new OAuth2Client(clientId);
+    const ticket = await oAuthClient.verifyIdToken({
+      idToken,
+      audience: clientId,
+    });
+    const payload = ticket.getPayload();
+
+    const email = payload?.email;
+    if (!email) {
+      return res.redirect(`${frontendLogin}?google=fail&reason=missing_email`);
+    }
+
+    let user = await User.findOne({ email: email.trim().toLowerCase() });
+
+    if (user && user.isActive === false) {
+      const msg = encodeURIComponent(
+        "Your account has been deactivated. Please contact an administrator to restore access."
+      );
+      return res.redirect(`${frontendLogin}?reason=account_inactive&message=${msg}`);
+    }
+
+    if (!user) {
+      const randomPassword = crypto.randomBytes(24).toString("hex");
+      user = await User.create({
+        name: payload?.name || email.split("@")[0],
+        email: email.trim().toLowerCase(),
+        password: randomPassword,
+        profileImage: payload?.picture || null,
+        isEmailVerified: true,
+        emailVerificationToken: null,
+        emailVerificationExpiresAt: null,
+      });
+    } else {
+      // Keep user profile reasonably fresh; do not overwrite intentionally managed data.
+      const updates = {};
+      if (!user.isEmailVerified) updates.isEmailVerified = true;
+      if (!user.profileImage && payload?.picture) updates.profileImage = payload.picture;
+      if (Object.keys(updates).length) {
+        user = await User.findByIdAndUpdate(user._id, updates, { new: true });
+      }
+    }
+
+    const token = signJwtForUser(user);
+    return res.redirect(`${frontendLogin}?token=${encodeURIComponent(token)}&provider=google`);
+  } catch (err) {
+    const message =
+      err && typeof err === "object" && "message" in err
+        ? String(err.message)
+        : "Unknown error";
+    console.error("Google auth callback error:", err);
+    return res.redirect(
+      `${frontendLogin}?google=fail&reason=server_error&message=${encodeURIComponent(
+        message
+      )}`
+    );
   }
 };

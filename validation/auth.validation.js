@@ -30,6 +30,57 @@ const leavesSchema = z.object({
   leaveTaken: z.number().optional(),
 });
 
+function splitCommaList(value) {
+  if (typeof value !== "string") return [];
+  return value
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+const skillsFlexibleSchema = z
+  .union([z.array(skillSchema), z.string()])
+  .optional()
+  .transform((val) => {
+    if (val === undefined) return undefined;
+    if (Array.isArray(val)) return val;
+    // comma-separated: "React, Node"
+    return splitCommaList(val).map((skill) => ({ skill }));
+  });
+
+const educationFlexibleSchema = z
+  .union([z.array(educationSchema), z.string()])
+  .optional()
+  .transform((val) => {
+    if (val === undefined) return undefined;
+    if (Array.isArray(val)) return val;
+    // comma-separated: "BSc, MSc"
+    return splitCommaList(val).map((degree) => ({ degree }));
+  });
+
+const experienceFlexibleSchema = z
+  .union([z.array(experienceSchema), z.string()])
+  .optional()
+  .transform((val) => {
+    if (val === undefined) return undefined;
+    if (Array.isArray(val)) return val;
+    // comma-separated: "Company A, Company B"
+    return splitCommaList(val).map((company) => ({ company }));
+  });
+
+const leavesFlexibleSchema = z
+  .union([z.array(leavesSchema), z.string()])
+  .optional()
+  .transform((val) => {
+    if (val === undefined) return undefined;
+    if (Array.isArray(val)) return val;
+    // comma-separated numbers: "24, 12"
+    return splitCommaList(val)
+      .map((v) => Number(v))
+      .filter((n) => Number.isFinite(n))
+      .map((totalBalance) => ({ totalBalance }));
+  });
+
 export const RegisterBodySchema = z
   .object({
     name: z.string().min(1, 'Name is required').openapi({ example: 'John Doe' }),
@@ -39,10 +90,10 @@ export const RegisterBodySchema = z
     profileImage: z.string().url().optional(),
     address: z.array(addressSchema).optional(),
     phone: z.string().optional().openapi({ example: '+91 9876543210' }),
-    skills: z.array(skillSchema).optional(),
-    education: z.array(educationSchema).optional(),
-    experience: z.array(experienceSchema).optional(),
-    leaves: z.array(leavesSchema).optional(),
+    skills: skillsFlexibleSchema,
+    education: educationFlexibleSchema,
+    experience: experienceFlexibleSchema,
+    leaves: leavesFlexibleSchema,
     dob: z.string().optional().openapi({ example: '1995-06-15' }),
     aadharCardNumber: z.string().optional(),
     panCardNumber: z.string().optional(),
@@ -62,9 +113,21 @@ export const AdminCreateUserBodySchema = z
     role: z
       .enum(['admin', 'employee', 'hr', 'manager'])
       .openapi({ example: 'employee', description: 'Role assigned to the new user' }),
+    profileImage: z.string().url().optional(),
+    address: z.array(addressSchema).optional(),
     phone: z.string().optional(),
+    skills: skillsFlexibleSchema,
+    education: educationFlexibleSchema,
+    experience: experienceFlexibleSchema,
+    leaves: leavesFlexibleSchema,
     gender: z.enum(['male', 'female']).optional(),
     dob: z.string().optional(),
+    aadharCardNumber: z.string().optional(),
+    panCardNumber: z.string().optional(),
+    bankAccountNo: z.string().optional(),
+    bankName: z.string().optional(),
+    bankIFSC: z.string().optional(),
+    bankBranch: z.string().optional(),
   })
   .openapi('AdminCreateUserBody');
 
@@ -85,14 +148,15 @@ export const UpdateUserBodySchema = z
   .object({
     name: z.string().optional(),
     email: z.string().email().optional(),
+    password: z.string().min(6).optional(),
     role: z.enum(['super-admin', 'admin', 'employee', 'hr', 'manager']).optional(),
     profileImage: z.string().optional(),
     address: z.array(addressSchema).optional(),
     phone: z.string().optional(),
-    skills: z.array(skillSchema).optional(),
-    education: z.array(educationSchema).optional(),
-    experience: z.array(experienceSchema).optional(),
-    leaves: z.array(leavesSchema).optional(),
+    skills: skillsFlexibleSchema,
+    education: educationFlexibleSchema,
+    experience: experienceFlexibleSchema,
+    leaves: leavesFlexibleSchema,
     dob: z.string().optional(),
     aadharCardNumber: z.string().optional(),
     panCardNumber: z.string().optional(),

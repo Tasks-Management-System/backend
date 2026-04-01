@@ -4,6 +4,8 @@ import {
   deleteUser,
   getAllUsers,
   getUser,
+  googleAuthCallback,
+  googleAuthStart,
   loginUser,
   logoutUser,
   registerUser,
@@ -28,6 +30,8 @@ const router = express.Router();
 
 router.post('/register', validate({ body: RegisterBodySchema }), registerUser);
 router.post('/login', validate({ body: LoginBodySchema }), loginUser);
+router.get('/google', googleAuthStart);
+router.get('/google/callback', googleAuthCallback);
 router.get('/verify-email', verifyUserEmail);
 router.post('/logout', authenticateMiddleware, logoutUser);
 router.post('/refresh-token', validate({ body: RefreshTokenBodySchema }), refreshToken);
