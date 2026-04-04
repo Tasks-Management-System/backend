@@ -83,7 +83,7 @@ const userSchema = new mongoose.Schema(
           type: Number,
           default: 24,
         },
-       
+
         paidLeave: {
           type: Number,
           default: 12,
@@ -133,22 +133,21 @@ const userSchema = new mongoose.Schema(
       default: null,
     },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
-userSchema.pre('save', async function(next){
-  if(!this.isModified('password')){
+userSchema.pre("save", async function (next) {
+  if (!this.isModified("password")) {
     return next();
   }
   this.password = await bcrypt.hash(this.password, 10);
   next();
 });
 
-userSchema.methods.comparePassword = async function(password){
+userSchema.methods.comparePassword = async function (password) {
   return await bcrypt.compare(password, this.password);
 };
 
 const User = mongoose.model("User", userSchema);
-
 
 export default User;
