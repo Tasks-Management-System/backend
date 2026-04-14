@@ -1,4 +1,5 @@
 import path from "path";
+import fs from "fs";
 import Salary from "../model/salary.model.js";
 import User from "../model/user.model.js";
 import { generateSalarySlip } from "../utils/generatePdf.js";
@@ -186,6 +187,7 @@ export const generatePDF = async (req, res) => {
 
   try {
     const salary = await Salary.findById(id).populate("employee", "name");
+
     if (!salary) {
       return res.status(404).json({
         success: false,
@@ -193,24 +195,32 @@ export const generatePDF = async (req, res) => {
       });
     }
 
-    const filePath = path.join(
-      "upload",
-      `salary-slip-${salary.employee.name}-${salary.month}-${salary.year}.pdf`
-    );
+    const fileName = `salary-slip-${salary.employee.name}-${salary.month}-${salary.year}.pdf`;
 
+    const filePath = path.join("upload", fileName);
+
+    // Ensure folder exists
+    if (!fs.existsSync("upload")) {
+      fs.mkdirSync("upload");
+    }
+
+    // Generate PDF
     await generateSalarySlip(salary, filePath);
 
-    return res.status(200).json({
-      success: true,
-      message: "Salary slip PDF generated successfully",
-      pdfPath:filePath,
-      salary
+    // Send file as download
+    return res.download(filePath, fileName, (err) => {
+      if (err) {
+        console.error("Download error:", err);
+      }
+
+      // OPTIONAL: delete file after download
+      fs.unlink(filePath, () => {});
     });
   } catch (error) {
     return res.status(500).json({
       success: false,
-      message: "Error getting PDF salary",
-      error: error.message
+      message: "Error generating PDF",
+      error: error.message,
     });
   }
 };
