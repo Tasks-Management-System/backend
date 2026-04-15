@@ -45,7 +45,7 @@ const ROLES_CAN_ASSIGN_OTHERS = new Set([
 ]);
 
 export const createTask = async (req, res) => {
-  const { project, assignedTo, taskName, description, dueDate, priority, status } = req.body;
+  const { project, assignedTo, taskName, description, dueDate, priority, status, subtasks, timeEstimate, templateName } = req.body;
 
   try {
     const projectDoc = await Project.findById(project);
@@ -113,6 +113,9 @@ export const createTask = async (req, res) => {
       dueDate: dueDate ? new Date(dueDate) : null,
       priority,
       status,
+      subtasks: subtasks || [],
+      timeEstimate: timeEstimate || null,
+      templateName: templateName || null,
     });
     return res.status(201).json({
       success: true,
@@ -264,7 +267,7 @@ export const updateTask = async (req, res) => {
       });
     }
 
-    const { status, taskName, priority, description, dueDate, archived } = req.body;
+    const { status, taskName, priority, description, dueDate, archived, subtasks, timeEstimate, timeLogged } = req.body;
 
     if (status) {
       // Start work timer when entering in_progress (not on review)
@@ -290,6 +293,9 @@ export const updateTask = async (req, res) => {
     if (description !== undefined) task.description = description;
     if (dueDate !== undefined) task.dueDate = dueDate ? new Date(dueDate) : null;
     if (archived !== undefined) task.archived = archived;
+    if (subtasks !== undefined) task.subtasks = subtasks;
+    if (timeEstimate !== undefined) task.timeEstimate = timeEstimate;
+    if (timeLogged !== undefined) task.timeLogged = timeLogged;
 
     await task.save();
 
@@ -316,7 +322,10 @@ export const taskById = async (req, res) => {
   try {
     const task = await Task.findById(taskId)
       .populate("project")
-      .populate("assignedTo");
+      .populate("assignedTo")
+      .populate("comments.author", "name email")
+      .populate("comments.mentions", "name email")
+      .populate("attachments.uploadedBy", "name email");
     if (!task) {
       return res.status(404).json({
         success: false,
@@ -428,6 +437,153 @@ export const addQuery = async (req, res) => {
     });
   }
 }
+
+export const addComment = async (req, res) => {
+  const { id } = req.params;
+  const { text, mentions } = req.body;
+  const userId = req.user._id;
+
+  try {
+    const task = await Task.findById(id);
+    if (!task) {
+      return res.status(404).json({ success: false, message: "Task not found" });
+    }
+
+    const allowed = await taskAccessibleByUser(task, req.user);
+    if (!allowed) {
+      return res.status(403).json({ success: false, message: "Not allowed to comment on this task" });
+    }
+
+    const comment = { author: userId, text, mentions: mentions || [] };
+    task.comments.push(comment);
+    await task.save();
+
+    const populated = await Task.findById(id)
+      .populate("comments.author", "name email")
+      .populate("comments.mentions", "name email");
+    const saved = populated.comments[populated.comments.length - 1];
+
+    return res.status(200).json({
+      success: true,
+      message: "Comment added successfully",
+      comment: saved,
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: "Error adding comment", error: error.message });
+  }
+};
+
+export const deleteComment = async (req, res) => {
+  const { id, commentId } = req.params;
+  try {
+    const task = await Task.findById(id);
+    if (!task) {
+      return res.status(404).json({ success: false, message: "Task not found" });
+    }
+
+    const comment = task.comments.id(commentId);
+    if (!comment) {
+      return res.status(404).json({ success: false, message: "Comment not found" });
+    }
+
+    const isAuthor = comment.author.toString() === req.user._id.toString();
+    const isAdmin = ["admin", "super-admin", "manager"].includes(
+      Array.isArray(req.user.role) ? req.user.role[0] : req.user.role
+    );
+    if (!isAuthor && !isAdmin) {
+      return res.status(403).json({ success: false, message: "Not allowed to delete this comment" });
+    }
+
+    task.comments.pull(commentId);
+    await task.save();
+
+    return res.status(200).json({ success: true, message: "Comment deleted" });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: "Error deleting comment", error: error.message });
+  }
+};
+
+export const addAttachment = async (req, res) => {
+  const { id } = req.params;
+  try {
+    const task = await Task.findById(id);
+    if (!task) {
+      return res.status(404).json({ success: false, message: "Task not found" });
+    }
+
+    const allowed = await taskAccessibleByUser(task, req.user);
+    if (!allowed) {
+      return res.status(403).json({ success: false, message: "Not allowed" });
+    }
+
+    if (!req.file) {
+      return res.status(400).json({ success: false, message: "No file provided" });
+    }
+
+    const attachment = {
+      filename: req.file.originalname,
+      url: req.file.path || req.file.location || "",
+      mimetype: req.file.mimetype || "",
+      size: req.file.size || 0,
+      uploadedBy: req.user._id,
+    };
+
+    task.attachments.push(attachment);
+    await task.save();
+
+    return res.status(200).json({
+      success: true,
+      message: "Attachment added",
+      attachment: task.attachments[task.attachments.length - 1],
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: "Error adding attachment", error: error.message });
+  }
+};
+
+export const deleteAttachment = async (req, res) => {
+  const { id, attachmentId } = req.params;
+  try {
+    const task = await Task.findById(id);
+    if (!task) {
+      return res.status(404).json({ success: false, message: "Task not found" });
+    }
+
+    const allowed = await taskAccessibleByUser(task, req.user);
+    if (!allowed) {
+      return res.status(403).json({ success: false, message: "Not allowed" });
+    }
+
+    task.attachments.pull(attachmentId);
+    await task.save();
+
+    return res.status(200).json({ success: true, message: "Attachment deleted" });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: "Error deleting attachment", error: error.message });
+  }
+};
+
+export const getTaskTemplates = async (req, res) => {
+  try {
+    const templates = await Task.find({ templateName: { $ne: null } })
+      .select("templateName taskName description subtasks priority timeEstimate")
+      .sort({ templateName: 1 })
+      .lean();
+
+    const unique = [];
+    const seen = new Set();
+    for (const t of templates) {
+      if (!seen.has(t.templateName)) {
+        seen.add(t.templateName);
+        unique.push(t);
+      }
+    }
+
+    return res.status(200).json({ success: true, templates: unique });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: "Error fetching templates", error: error.message });
+  }
+};
 
 export const replyQuery = async (req, res) => {
   const {taskId, queryId} = req.params;

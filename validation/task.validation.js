@@ -2,6 +2,13 @@ import { z, registry } from '../swagger/registry.js';
 
 const bearerAuth = [{ bearerAuth: [] }];
 
+const SubtaskSchema = z.object({
+  _id: z.string().optional(),
+  title: z.string().min(1, 'Subtask title is required'),
+  completed: z.boolean().optional(),
+  order: z.number().optional(),
+});
+
 export const CreateTaskBodySchema = z
   .object({
     project: z.string().min(1, 'Project ID is required').openapi({ example: '64b1f2c3d4e5f6a7b8c9d0e1' }),
@@ -11,6 +18,9 @@ export const CreateTaskBodySchema = z
     dueDate: z.string().optional().openapi({ example: '2025-12-31' }),
     priority: z.enum(['low', 'medium', 'urgent']).optional().openapi({ example: 'medium' }),
     status: z.enum(['pending', 'in_progress', 'review', 'completed']).optional().openapi({ example: 'pending' }),
+    subtasks: z.array(SubtaskSchema).optional(),
+    timeEstimate: z.number().nullable().optional(),
+    templateName: z.string().nullable().optional(),
   })
   .openapi('CreateTaskBody');
 
@@ -22,8 +32,18 @@ export const UpdateTaskBodySchema = z
     archived: z.boolean().optional(),
     status: z.enum(['pending', 'in_progress', 'review', 'completed']).optional().openapi({ example: 'in_progress' }),
     priority: z.enum(['low', 'medium', 'urgent']).optional(),
+    subtasks: z.array(SubtaskSchema).optional(),
+    timeEstimate: z.number().nullable().optional(),
+    timeLogged: z.number().optional(),
   })
   .openapi('UpdateTaskBody');
+
+export const AddCommentBodySchema = z
+  .object({
+    text: z.string().min(1, 'Comment text is required'),
+    mentions: z.array(z.string()).optional(),
+  })
+  .openapi('AddCommentBody');
 
 export const TaskIdParamSchema = z
   .object({ id: z.string().min(1).openapi({ example: '64b1f2c3d4e5f6a7b8c9d0e1' }) })
