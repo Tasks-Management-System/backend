@@ -14,6 +14,9 @@ import salaryRoutes from "./routes/salary.routes.js";
 import { generateOpenAPIDocument } from "./swagger/index.js";
 import notesRoutes from "./routes/notes.routes.js";
 import eventRoutes from "./routes/event.routes.js";
+import announcementRoutes from "./routes/announcement.routes.js";
+import assetRoutes from "./routes/asset.routes.js";
+import timesheetRoutes from "./routes/timesheet.routes.js";
 import { startReminderJob } from "./jobs/reminderJob.js";
 
 const app = express();
@@ -50,6 +53,9 @@ app.use("/api/v1/hiring", hiringRoutes);
 app.use("/api/v1/salary", salaryRoutes);
 app.use("/api/v1/notes", notesRoutes);
 app.use("/api/v1/events", eventRoutes);
+app.use("/api/v1/announcements", announcementRoutes);
+app.use("/api/v1/assets", assetRoutes);
+app.use("/api/v1/timesheets", timesheetRoutes);
 
 const swaggerDocument = generateOpenAPIDocument();
 app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerDocument));
