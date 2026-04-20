@@ -3,6 +3,7 @@ import {
   createUserByAdmin,
   deleteUser,
   getAllUsers,
+  getTeamBirthdays,
   getUser,
   googleAuthCallback,
   googleAuthStart,
@@ -44,6 +45,7 @@ router.post(
   createUserByAdmin
 );
 
+router.get('/team/birthdays', authenticateMiddleware, getTeamBirthdays);
 router.get('/', authenticateMiddleware, authorize('super-admin', 'admin', 'hr'), getAllUsers);
 router.get('/:id', authenticateMiddleware, validate({ params: UserIdParamSchema }), getUser);
 router.put('/:id', authenticateMiddleware, uploadImage.single('profileImage'), validate({ params: UserIdParamSchema, body: UpdateUserBodySchema }), updateUser);

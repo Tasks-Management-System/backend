@@ -1,0 +1,372 @@
+# TICKET-559: Client Detail Page & Offboarding Flow
+
+**Status:** New Feature
+**Depends On:** TICKET-558 (Client table + Enroll modal must be complete)
+**Purpose:** Detailed view of an enrolled client with admin notes, course progress, and offboarding/re-enrollment flow
+
+---
+
+## Overview
+
+When Sonia clicks **View** on any client row in the enrollment table (built in TICKET-558), this page opens. It shows everything about that client's enrollment — progress, notes, program info — and gives the admin the ability to offboard or re-enroll them.
+
+---
+
+## Route
+
+```
+/admin/clients/:userId
+```
+
+Examples:
+- `/admin/clients/abc123-uuid`
+
+**Navigation:**
+- Opens from "View" button in the clients table (TICKET-558)
+- Back button → returns to `/admin/clients`
+
+---
+
+## Page Sections
+
+### 1. Client Header
+
+Displayed at the top of the page.
+
+| Element | Data Source | Notes |
+|---------|-------------|-------|
+| Full name | `auth.users.raw_user_meta_data.display_name` | Large heading |
+| Email | `auth.users.email` | Subtext below name |
+| Program badge | `programs.name` | e.g., "5K Brand Accelerator" |
+| Status badge | `enrollments.status` | Green = Active, Gray = Offboarded |
+| Enrolled date | `enrollments.enrolled_at` | Formatted: "Enrolled April 6, 2026" |
+
+---
+
+### 2. Enrollment Info Card
+
+A small info card below the header.
+
+| Label | Value |
+|-------|-------|
+| Program | Full program name |
+| Weeks remaining | Calculate: `enrolled_at + duration_weeks * 7 days - today` |
+| Enrollment notes | `enrollments.notes` (from when admin enrolled them) |
+
+**Weeks remaining formula:**
+```javascript
+const endDate = addWeeks(enrolledAt, program.duration_weeks);
+const weeksLeft = differenceInWeeks(endDate, today);
+// If weeksLeft < 0 → show "Program complete"
+// If weeksLeft === 0 → show "Final week"
+// Else → show "X weeks remaining"
+```
+
+---
+
+### 3. Course Progress (Read-Only)
+
+List of all **published** course steps for this client's program, with their completion status.
+
+| Column | Data Source |
+|--------|-------------|
+| Step number | `course_steps.step_number` |
+| Step title | `course_steps.title` |
+| Completion status | `homework_submissions` — if all questions answered = complete |
+
+**Completion logic:**
+- A step is "Complete" if all homework questions in all exercises of that step have a submission from this user
+- A step is "In Progress" if some questions answered but not all
+- A step is "Not Started" if no submissions at all
+
+**Display:**
+- Simple list with checkmarks, progress indicators, or colored dots
+- Read-only — admin cannot submit homework on behalf of student
+- Only published steps shown (same RLS rule as students)
+
+**Empty state:** "No course steps published yet."
+
+---
+
+### 4. Admin Notes
+
+Editable textarea that saves to `enrollments.notes` on blur (auto-save).
+
+- Label: "Admin Notes"
+- Placeholder: "Add internal notes about this client..."
+- Auto-save on blur → fires `UPDATE enrollments SET notes = ? WHERE id = ?`
+- Show subtle "Saved" confirmation after save
+- **This is separate from the enrollment notes** (notes entered at enrollment time) — they both write to the same `enrollments.notes` field, so whatever is in there shows here and is editable
+
+---
+
+### 5. Action Buttons
+
+**If status = active:**
+- Red **Offboard Client** button (triggers offboarding flow)
+
+**If status = offboarded:**
+- Green **Re-enroll Client** button (triggers re-enrollment)
+- Offboarded date shown: "Offboarded on April 10, 2026"
+
+---
+
+## Offboarding Flow
+
+### Triggered By
+Clicking the **Offboard Client** button.
+
+### Confirmation Modal
+
+```
+Title:   Offboard [Client Name]?
+
+Body:    This will lock their access to course content.
+         Their Brand DNA Vault data will remain accessible.
+
+Buttons: Cancel    |   Confirm Offboard (red)
+```
+
+### On Confirm
+
+1. `UPDATE enrollments SET status = 'offboarded', offboarded_at = now() WHERE id = ?`
+2. Show success toast: "[Name] has been offboarded"
+3. Redirect to `/admin/clients`
+
+### What Offboarding Does NOT Do
+- Does **NOT** delete user account
+- Does **NOT** delete Brand DNA Vault data
+- Does **NOT** delete homework submissions
+- Only changes enrollment `status` field
+
+### RLS Impact After Offboarding
+The RLS policy on `course_steps` checks `is_published = true` — but the **route guard** on the student-facing course page should also check enrollment status. If enrollment is offboarded, student is redirected away even if steps are published.
+
+> Note: Add enrollment status check to the student course route guard when building the student portal (future ticket).
+
+---
+
+## Re-enrollment Flow
+
+### Triggered By
+Clicking the **Re-enroll Client** button (only visible when status = offboarded).
+
+### No confirmation modal needed (less destructive action)
+
+### On Click
+
+1. `UPDATE enrollments SET status = 'active', offboarded_at = null WHERE id = ?`
+2. Show success toast: "[Name] has been re-enrolled"
+3. Page refreshes (status badge updates to Active)
+4. Re-enroll button switches back to Offboard button
+
+---
+
+## Data Queries Required
+
+### 1. Fetch client detail (full join)
+```sql
+SELECT
+  e.id as enrollment_id,
+  e.status,
+  e.enrolled_at,
+  e.offboarded_at,
+  e.notes,
+  p.id as program_id,
+  p.name as program_name,
+  p.duration_weeks,
+  p.slug as program_slug,
+  u.id as user_id,
+  u.email,
+  u.raw_user_meta_data->>'display_name' as display_name
+FROM enrollments e
+JOIN programs p ON e.program_id = p.id
+JOIN auth.users u ON e.user_id = u.id
+WHERE e.user_id = :userId
+LIMIT 1
+```
+
+### 2. Fetch course steps (published only, with completion status)
+```sql
+SELECT
+  cs.id,
+  cs.step_number,
+  cs.title,
+  cs.is_published,
+  COUNT(hq.id) as total_questions,
+  COUNT(hs.id) as answered_questions
+FROM course_steps cs
+LEFT JOIN exercises ex ON ex.step_id = cs.id
+LEFT JOIN homework_questions hq ON hq.exercise_id = ex.id
+LEFT JOIN homework_submissions hs ON hs.question_id = hq.id AND hs.user_id = :userId
+WHERE cs.program_id = :programId
+  AND cs.is_published = true
+GROUP BY cs.id, cs.step_number, cs.title, cs.is_published
+ORDER BY cs.step_number ASC
+```
+
+**Completion derivation:**
+- `answered_questions === 0` → Not Started
+- `answered_questions < total_questions` → In Progress
+- `answered_questions === total_questions && total_questions > 0` → Complete
+
+### 3. Update enrollment notes
+```sql
+UPDATE enrollments
+SET notes = :notes
+WHERE id = :enrollmentId
+```
+
+### 4. Offboard client
+```sql
+UPDATE enrollments
+SET status = 'offboarded', offboarded_at = now()
+WHERE id = :enrollmentId
+```
+
+### 5. Re-enroll client
+```sql
+UPDATE enrollments
+SET status = 'active', offboarded_at = null
+WHERE id = :enrollmentId
+```
+
+---
+
+## Files to Create / Modify
+
+### New Files
+```
+src/pages/AdminClientDetail.jsx               — Main page component
+src/components/enrollment/ClientHeader.jsx    — Name, email, badges
+src/components/enrollment/EnrollmentInfo.jsx  — Program info, weeks remaining
+src/components/enrollment/CourseProgress.jsx  — Steps list with completion
+src/components/enrollment/OffboardModal.jsx   — Confirmation modal
+```
+
+### Modified Files
+```
+src/App.jsx                          — Add route case 'adminClientDetail'
+src/services/enrollmentService.js    — Add fetchClientDetail, offboard, reenroll queries
+```
+
+> Note: `enrollmentService.js` was created in TICKET-558. Extend it — do not create a new file.
+
+---
+
+## Step-by-Step Implementation Checklist
+
+### Phase 1: Extend enrollmentService.js
+- [ ] Add `fetchClientDetail(userId)` — returns enrollment + user + program data
+- [ ] Add `fetchClientProgress(userId, programId)` — returns steps with completion counts
+- [ ] Add `updateEnrollmentNotes(enrollmentId, notes)` — auto-save notes
+- [ ] Add `offboardClient(enrollmentId)` — set status + offboarded_at
+- [ ] Add `reenrollClient(enrollmentId)` — set status = active, clear offboarded_at
+
+### Phase 2: AdminClientDetail Page
+- [ ] Create `src/pages/AdminClientDetail.jsx`
+  - [ ] Accept `userId` prop from router
+  - [ ] Admin role check (same as TICKET-558)
+  - [ ] Load client detail on mount
+  - [ ] Handle loading + error states
+  - [ ] Back button → navigate to `/admin/clients`
+
+### Phase 3: Client Header
+- [ ] Create `src/components/enrollment/ClientHeader.jsx`
+  - [ ] Display name (large), email (subtext)
+  - [ ] Program badge
+  - [ ] Status badge (green Active / gray Offboarded)
+  - [ ] Enrolled date formatted
+
+### Phase 4: Enrollment Info Card
+- [ ] Create `src/components/enrollment/EnrollmentInfo.jsx`
+  - [ ] Show program name, weeks remaining, enrollment notes
+  - [ ] Calculate weeks remaining logic
+  - [ ] Handle "Program complete" edge case
+
+### Phase 5: Course Progress
+- [ ] Create `src/components/enrollment/CourseProgress.jsx`
+  - [ ] Fetch steps with completion counts
+  - [ ] Render each step row with: step number, title, completion status badge
+  - [ ] Color coding: Complete (green), In Progress (yellow), Not Started (gray)
+  - [ ] Empty state if no published steps
+
+### Phase 6: Admin Notes
+- [ ] Add editable textarea inside `AdminClientDetail.jsx`
+  - [ ] Prefilled with existing `enrollments.notes`
+  - [ ] Auto-save on blur
+  - [ ] Show "Saved" checkmark after save
+
+### Phase 7: Offboard Modal
+- [ ] Create `src/components/enrollment/OffboardModal.jsx`
+  - [ ] Show client name in title
+  - [ ] Body text about Brand Vault data being preserved
+  - [ ] Cancel / Confirm Offboard buttons
+  - [ ] Confirm fires offboardClient(), shows toast, redirects
+
+### Phase 8: Re-enroll Logic
+- [ ] Add Re-enroll button to `AdminClientDetail.jsx`
+  - [ ] Only show when status = offboarded
+  - [ ] On click: call reenrollClient(), show toast, refresh page state
+  - [ ] No confirmation modal (less destructive)
+
+### Phase 9: App.jsx Routing
+- [ ] Import `AdminClientDetail` in `App.jsx`
+- [ ] Add `case 'adminClientDetail'` in `renderView()`
+- [ ] Pass `userId` from route params to component
+
+### Phase 10: Connect TICKET-558 View Button
+- [ ] In `ClientsTable.jsx` (TICKET-558), wire the "View" button to navigate to `adminClientDetail` with the user's `userId`
+
+### Phase 11: Testing
+- [ ] Click View on a client row → opens detail page
+- [ ] All sections load (header, info, progress, notes)
+- [ ] Weeks remaining calculates correctly
+- [ ] Course progress shows correct step statuses
+- [ ] Admin notes auto-saves on blur
+- [ ] Offboard button → confirmation modal shows client name
+- [ ] Confirm offboard → status changes, toast shows, redirects
+- [ ] Navigate back to clients table → status badge shows Offboarded
+- [ ] Open same client again → Re-enroll button shows (not Offboard)
+- [ ] Re-enroll → status resets to Active
+
+---
+
+## Testing Checklist (Acceptance Criteria)
+
+- [ ] Admin can click View on any client and land on detail page
+- [ ] Client header shows correct name, email, program, status, enrolled date
+- [ ] Enrollment info shows program name and weeks remaining
+- [ ] Course progress shows all published steps with completion status
+- [ ] Admin notes field is editable and auto-saves on blur
+- [ ] Offboard button triggers confirmation modal with correct client name
+- [ ] Modal body mentions Brand Vault data is preserved
+- [ ] Confirming offboard updates status, shows toast, redirects
+- [ ] Re-enroll button shows for offboarded clients
+- [ ] Re-enrolling resets status to active and hides offboarded date
+- [ ] Non-admin users cannot access this page
+
+---
+
+## Key Business Rules
+
+| Rule | Why It Matters |
+|------|----------------|
+| Offboarding does NOT delete Brand Vault data | Client's brand work is their IP — must be preserved |
+| Offboarded clients lose course access | RLS + route guard blocks course steps |
+| Re-enrollment restores access immediately | No extra steps needed after re-enroll |
+| Admin notes are internal only | Students never see `enrollments.notes` |
+
+---
+
+## Files Summary
+
+| File | Type | Description |
+|------|------|-------------|
+| `src/pages/AdminClientDetail.jsx` | New | Main detail page |
+| `src/components/enrollment/ClientHeader.jsx` | New | Name, email, badges |
+| `src/components/enrollment/EnrollmentInfo.jsx` | New | Program info, weeks remaining |
+| `src/components/enrollment/CourseProgress.jsx` | New | Steps list with completion |
+| `src/components/enrollment/OffboardModal.jsx` | New | Offboard confirmation modal |
+| `src/App.jsx` | Modified | Add adminClientDetail route |
+| `src/services/enrollmentService.js` | Modified | Add 5 new query functions |

@@ -1,4 +1,5 @@
 import "./loadEnv.js";
+import http from "http";
 import express from "express";
 import cors from "cors";
 import swaggerUi from "swagger-ui-express";
@@ -17,7 +18,9 @@ import eventRoutes from "./routes/event.routes.js";
 import announcementRoutes from "./routes/announcement.routes.js";
 import assetRoutes from "./routes/asset.routes.js";
 import timesheetRoutes from "./routes/timesheet.routes.js";
+import chatRoutes from "./routes/chat.routes.js";
 import { startReminderJob } from "./jobs/reminderJob.js";
+import { initSocket } from "./utils/socket.js";
 
 const app = express();
 // Avoid 304 Not Modified for API JSON responses (frontend expects a body).
@@ -56,15 +59,19 @@ app.use("/api/v1/events", eventRoutes);
 app.use("/api/v1/announcements", announcementRoutes);
 app.use("/api/v1/assets", assetRoutes);
 app.use("/api/v1/timesheets", timesheetRoutes);
+app.use("/api/v1/chat", chatRoutes);
 
 const swaggerDocument = generateOpenAPIDocument();
 app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerDocument));
 app.get("/api-docs.json", (req, res) => res.json(swaggerDocument));
 
+const server = http.createServer(app);
+initSocket(server);
+
 const startServer = async () => {
   await connectDB();
   startReminderJob();
-  app.listen(PORT, () => {
+  server.listen(PORT, () => {
     console.log(`Server is running on port ${PORT}`);
     console.log(`Swagger UI: http://localhost:${PORT}/api-docs`);
   });

@@ -550,6 +550,49 @@ export const updateUser = async (req, res) => {
   }
 };
 
+/**
+ * Lightweight team directory available to ANY authenticated user in the org.
+ * Returns just the fields needed to render a birthday feed / team list.
+ */
+export const getTeamBirthdays = async (req, res) => {
+  try {
+    const actorRole = Array.isArray(req.user.role) ? req.user.role[0] : req.user.role;
+
+    let query;
+    if (actorRole === "super-admin") {
+      query = {};
+    } else {
+      const orgAdminId = resolveOrgAdminId(req.user);
+      if (!orgAdminId) {
+        query = { _id: req.user._id };
+      } else {
+        query = {
+          $or: [
+            { _id: req.user._id },
+            { _id: orgAdminId },
+            { managedBy: orgAdminId },
+          ],
+        };
+      }
+    }
+
+    const users = await User.find(query)
+      .select("_id name profileImage role dob")
+      .lean();
+
+    return res.status(200).json({
+      success: true,
+      users,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: "Error fetching team birthdays",
+      error: error.message,
+    });
+  }
+};
+
 export const getAllUsers = async (req, res) => {
   try {
     const actorRole = Array.isArray(req.user.role) ? req.user.role[0] : req.user.role;
