@@ -120,6 +120,11 @@ const userSchema = new mongoose.Schema(
       ref: "User",
       default: null,
     },
+    organization: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Organization",
+      default: null,
+    },
     isEmailVerified: {
       type: Boolean,
       default: false,

@@ -19,6 +19,7 @@ import announcementRoutes from "./routes/announcement.routes.js";
 import assetRoutes from "./routes/asset.routes.js";
 import timesheetRoutes from "./routes/timesheet.routes.js";
 import chatRoutes from "./routes/chat.routes.js";
+import organizationRoutes from "./routes/organization.routes.js";
 import { startReminderJob } from "./jobs/reminderJob.js";
 import { initSocket } from "./utils/socket.js";
 
@@ -60,6 +61,7 @@ app.use("/api/v1/announcements", announcementRoutes);
 app.use("/api/v1/assets", assetRoutes);
 app.use("/api/v1/timesheets", timesheetRoutes);
 app.use("/api/v1/chat", chatRoutes);
+app.use("/api/v1/organization", organizationRoutes);
 
 const swaggerDocument = generateOpenAPIDocument();
 app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerDocument));
