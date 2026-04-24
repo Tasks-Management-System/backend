@@ -28,7 +28,7 @@ const app = express();
 app.set("etag", false);
 app.use(cors(
     {
-        origin: process.env.FRONTEND_URL,
+        origin: [process.env.FRONTEND_URL, "https://frontend-zeta-eight-57.vercel.app"],
         credentials: true,
     }
 ));
