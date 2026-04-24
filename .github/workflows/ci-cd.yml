@@ -31,7 +31,6 @@ jobs:
           GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
           CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
           SENDGRID_API_KEY: ${{ secrets.SENDGRID_API_KEY }}
-          REDIS_URL: ${{ secrets.REDIS_URL }}
         run: |
           missing=""
           [ -z "$MONGODB_URI" ]           && missing="$missing MONGODB_URI"
@@ -40,7 +39,6 @@ jobs:
           [ -z "$GOOGLE_CLIENT_SECRET" ]  && missing="$missing GOOGLE_CLIENT_SECRET"
           [ -z "$CLOUDINARY_CLOUD_NAME" ] && missing="$missing CLOUDINARY_CLOUD_NAME"
           [ -z "$SENDGRID_API_KEY" ]      && missing="$missing SENDGRID_API_KEY"
-          [ -z "$REDIS_URL" ]             && missing="$missing REDIS_URL"
           if [ -n "$missing" ]; then
             echo "::error::Missing GitHub secrets:$missing"
             echo "Go to Settings → Secrets and variables → Actions and add the missing secrets."
