@@ -4,13 +4,20 @@ let subClient = null;
 if (process.env.REDIS_URL) {
   const Redis = (await import("ioredis")).default;
 
-  pubClient = new Redis(process.env.REDIS_URL, {
+  // Upstash requires TLS — upgrade redis:// to rediss:// automatically
+  const redisUrl = process.env.REDIS_URL.replace(/^redis:\/\//, "rediss://");
+
+  pubClient = new Redis(redisUrl, {
     maxRetriesPerRequest: null,
-    lazyConnect: true,
+    tls: {},
   });
 
   pubClient.on("error", (err) => {
     console.error("Redis pubClient error:", err.message);
+  });
+
+  pubClient.on("connect", () => {
+    console.log("Redis connected.");
   });
 
   subClient = pubClient.duplicate();
@@ -18,16 +25,6 @@ if (process.env.REDIS_URL) {
   subClient.on("error", (err) => {
     console.error("Redis subClient error:", err.message);
   });
-
-  try {
-    await pubClient.connect();
-    await subClient.connect();
-    console.log("Redis connected.");
-  } catch (err) {
-    console.error("Redis connection failed, running without Redis:", err.message);
-    pubClient = null;
-    subClient = null;
-  }
 }
 
 export { pubClient, subClient };
