@@ -30,7 +30,10 @@ jobs:
           GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
           GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
           CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
-          SENDGRID_API_KEY: ${{ secrets.SENDGRID_API_KEY }}
+          CLOUDINARY_API_KEY: ${{ secrets.CLOUDINARY_API_KEY }}
+          CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}
+          EMAIL_USER: ${{ secrets.EMAIL_USER }}
+          EMAIL_PASS: ${{ secrets.EMAIL_PASS }}
         run: |
           missing=""
           [ -z "$MONGODB_URI" ]           && missing="$missing MONGODB_URI"
@@ -38,7 +41,10 @@ jobs:
           [ -z "$GOOGLE_CLIENT_ID" ]      && missing="$missing GOOGLE_CLIENT_ID"
           [ -z "$GOOGLE_CLIENT_SECRET" ]  && missing="$missing GOOGLE_CLIENT_SECRET"
           [ -z "$CLOUDINARY_CLOUD_NAME" ] && missing="$missing CLOUDINARY_CLOUD_NAME"
-          [ -z "$SENDGRID_API_KEY" ]      && missing="$missing SENDGRID_API_KEY"
+          [ -z "$CLOUDINARY_API_KEY" ]    && missing="$missing CLOUDINARY_API_KEY"
+          [ -z "$CLOUDINARY_API_SECRET" ] && missing="$missing CLOUDINARY_API_SECRET"
+          [ -z "$EMAIL_USER" ]            && missing="$missing EMAIL_USER"
+          [ -z "$EMAIL_PASS" ]            && missing="$missing EMAIL_PASS"
           if [ -n "$missing" ]; then
             echo "::error::Missing GitHub secrets:$missing"
             echo "Go to Settings → Secrets and variables → Actions and add the missing secrets."
